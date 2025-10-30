@@ -286,10 +286,11 @@ def perform_pca(features_list):
     
     return features_pca, pca, scaler
 
+
 def generate_playlist_line(pca_df, track1_idx, track2_idx, num_tracks=10):
     """
     Génère une playlist linéaire entre deux tracks
-    Version corrigée avec gestion d'erreurs complète
+    Version adaptée du code PyTorch de référence
     """
     try:
         # Validation des indices
@@ -301,51 +302,60 @@ def generate_playlist_line(pca_df, track1_idx, track2_idx, num_tracks=10):
             st.warning("Les deux tracks doivent être différentes")
             return None, None, None, None
         
-        # Extraire les points PC1/PC2
-        p1 = np.array([
-            pca_df.iloc[track1_idx]['PC1'], 
-            pca_df.iloc[track1_idx]['PC2']
-        ])
-        p2 = np.array([
-            pca_df.iloc[track2_idx]['PC1'], 
-            pca_df.iloc[track2_idx]['PC2']
-        ])
+        # Récupérer les données des tracks
+        track1_data = pca_df.iloc[track1_idx]
+        track2_data = pca_df.iloc[track2_idx]
         
-        # Calculer les points sur la ligne
+        # Extraire les points PC1/PC2
+        p1 = np.array([track1_data['PC1'], track1_data['PC2']])
+        p2 = np.array([track2_data['PC1'], track2_data['PC2']])
+        
+        # Debug info
+        st.info(f"Track 1: PC1={p1[0]:.3f}, PC2={p1[1]:.3f}")
+        st.info(f"Track 2: PC1={p2[0]:.3f}, PC2={p2[1]:.3f}")
+        
+        # Calculer les points sur la ligne (exactement comme le code de référence)
         t_values = np.linspace(0, 1, num_tracks)
         line_points = np.array([p1 + t * (p2 - p1) for t in t_values])
         
         # Initialiser la playlist
         playlist_tracks = []
-        used_tracks = {track1_idx, track2_idx}
+        used_tracks = set()
         
         # Pour chaque point cible sur la ligne
         for i, target_point in enumerate(line_points):
             distances = []
             
             # Calculer distances pour toutes les tracks non utilisées
-            for idx in range(len(pca_df)):
-                if idx not in used_tracks:
-                    row = pca_df.iloc[idx]
+            for idx, row in pca_df.iterrows():
+                # Utiliser l'index du DataFrame comme identifiant unique
+                track_identifier = idx
+                
+                if track_identifier not in used_tracks:
                     track_point = np.array([row['PC1'], row['PC2']])
                     distance = np.linalg.norm(track_point - target_point)
-                    distances.append((distance, idx, row))
+                    distances.append((distance, track_identifier, row['genre'], track_point))
             
             # Sélectionner la track la plus proche
             if distances:
                 distances.sort(key=lambda x: x[0])
-                closest_distance, closest_idx, closest_row = distances[0]
+                closest_distance, closest_idx, closest_genre, closest_point = distances[0]
                 
-                # Construire l'objet track
+                # Récupérer toutes les infos de la track
+                closest_row = pca_df.loc[closest_idx]
+                
+                # Construire l'objet track (conforme au format de référence)
                 playlist_tracks.append({
                     'position': i + 1,
-                    'index': closest_idx,
+                    'track_id': closest_idx,  # Utiliser l'index comme track_id
                     'name': closest_row.get('name', 'Unknown'),
                     'artists': closest_row.get('artists', 'Unknown'),
-                    'genre': closest_row.get('genre', 'Unknown'),
-                    'distance': closest_distance,
-                    'PC1': closest_row['PC1'],
-                    'PC2': closest_row['PC2'],
+                    'genre': closest_genre,
+                    'distance_to_line': closest_distance,
+                    'target_point': target_point,
+                    'actual_point': closest_point,
+                    'PC1': closest_point[0],
+                    'PC2': closest_point[1],
                     'uri': closest_row.get('uri', None),
                     'spotify_id': closest_row.get('spotify_id', None),
                     'deezer_id': closest_row.get('deezer_id', None),
@@ -361,6 +371,50 @@ def generate_playlist_line(pca_df, track1_idx, track2_idx, num_tracks=10):
         import traceback
         st.error(traceback.format_exc())
         return None, None, None, None
+    
+def analyze_playlist_quality(playlist):
+    """
+    Analyse la qualité d'une playlist générée
+    Version adaptée du code de référence
+    """
+    if not playlist:
+        return None
+    
+    try:
+        genres_in_playlist = [track['genre'] for track in playlist]
+        unique_genres = len(set(genres_in_playlist))
+        genre_distribution = pd.Series(genres_in_playlist).value_counts()
+        
+        distances = [track['distance_to_line'] for track in playlist]
+        avg_distance = np.mean(distances)
+        std_distance = np.std(distances)
+        max_distance = np.max(distances)
+        
+        # Calcul de la fluidité (smoothness)
+        smoothness_distances = []
+        for i in range(len(playlist) - 1):
+            p1 = np.array([playlist[i]['PC1'], playlist[i]['PC2']])
+            p2 = np.array([playlist[i+1]['PC1'], playlist[i+1]['PC2']])
+            smoothness_distances.append(np.linalg.norm(p2 - p1))
+        
+        avg_smoothness = np.mean(smoothness_distances) if smoothness_distances else 0
+        
+        analysis = {
+            'num_tracks': len(playlist),
+            'unique_genres': unique_genres,
+            'genre_diversity_ratio': unique_genres / len(playlist),
+            'avg_distance_to_line': avg_distance,
+            'std_distance_to_line': std_distance,
+            'max_distance_to_line': max_distance,
+            'avg_smoothness': avg_smoothness,
+            'genre_distribution': genre_distribution.to_dict()
+        }
+        
+        return analysis
+        
+    except Exception as e:
+        st.error(f"Erreur lors de l'analyse : {str(e)}")
+        return None
 
 # --- FONCTIONS SPOTIFY ---
 
@@ -798,6 +852,7 @@ if 'access_token' not in st.session_state:
 if 'deezer_search_results' not in st.session_state:
     st.session_state.deezer_search_results = []
 
+
 if 'generated_playlist' not in st.session_state:
     st.session_state.generated_playlist = None
 if 'line_points' not in st.session_state:
@@ -808,6 +863,8 @@ if 'p2' not in st.session_state:
     st.session_state.p2 = None
 if 'pca_df' not in st.session_state:
     st.session_state.pca_df = None
+if 'playlist_analysis' not in st.session_state:
+    st.session_state.playlist_analysis = None
 
 
 # --- INTERFACE STREAMLIT PRINCIPALE ---
@@ -1118,7 +1175,7 @@ with tab4:
                     pca_result, pca_model, scaler = perform_pca(features_list)
                     
                     if pca_result is not None:
-                        # Créer le DataFrame PCA
+                        # Créer le DataFrame PCA avec TOUS les champs nécessaires
                         pca_df = pd.DataFrame({
                             'PC1': pca_result[:, 0],
                             'PC2': pca_result[:, 1],
@@ -1128,10 +1185,11 @@ with tab4:
                             'uri': [t.get('uri') for t in valid_tracks if t.get('features') is not None],
                             'spotify_id': [t.get('spotify_id') for t in valid_tracks if t.get('features') is not None],
                             'deezer_id': [t.get('deezer_id') for t in valid_tracks if t.get('features') is not None],
-                            'preview_url': [t.get('preview_url') for t in valid_tracks if t.get('features') is not None]
+                            'preview_url': [t.get('preview_url') for t in valid_tracks if t.get('features') is not None],
+                            'confidence': [t.get('confidence', 0) for t in valid_tracks if t.get('features') is not None]
                         })
                         
-                        # Sauvegarder dans session_state
+                        # ✅ SAUVEGARDER dans session_state
                         st.session_state.pca_df = pca_df
                         
                         # Visualisation
@@ -1144,11 +1202,18 @@ with tab4:
                             hover_data=['name', 'artists'],
                             title=_('Espace PCA des tracks')
                         )
-                        fig.update_traces(marker=dict(size=12))
-                        fig.update_layout(height=600)
+                        fig.update_traces(marker=dict(size=12, line=dict(width=1, color='white')))
+                        fig.update_layout(
+                            height=600,
+                            plot_bgcolor='white',
+                            xaxis=dict(gridcolor='lightgray', showgrid=True),
+                            yaxis=dict(gridcolor='lightgray', showgrid=True)
+                        )
                         st.plotly_chart(fig, use_container_width=True)
                         
+                        # Message de succès
                         st.success(_(f"✅ {len(pca_df)} tracks prêtes pour la création de playlist"))
+                        st.info(_("👉 Rendez-vous dans l'onglet '🎨 Playlist' pour créer votre playlist personnalisée"))
                     else:
                         st.error(_("❌ Erreur lors du calcul PCA"))
                 else:
@@ -1221,18 +1286,18 @@ with tab5:
         
         with col1:
             track1_idx = st.selectbox(
-                _("Track de départ:"),
+                _("🚀 Track de départ:"),
                 range(len(st.session_state.pca_df)),
-                format_func=lambda x: f"{st.session_state.pca_df.iloc[x]['name']} ({st.session_state.pca_df.iloc[x]['genre']})",
+                format_func=lambda x: f"{st.session_state.pca_df.iloc[x]['name'][:40]} ({st.session_state.pca_df.iloc[x]['genre']})",
                 key="track1_selector"
             )
         
         with col2:
             track2_idx = st.selectbox(
-                _("Track d'arrivée:"),
+                _("🎯 Track d'arrivée:"),
                 range(len(st.session_state.pca_df)),
                 index=min(1, len(st.session_state.pca_df)-1),
-                format_func=lambda x: f"{st.session_state.pca_df.iloc[x]['name']} ({st.session_state.pca_df.iloc[x]['genre']})",
+                format_func=lambda x: f"{st.session_state.pca_df.iloc[x]['name'][:40]} ({st.session_state.pca_df.iloc[x]['genre']})",
                 key="track2_selector"
             )
         
@@ -1255,8 +1320,11 @@ with tab5:
                         st.session_state.line_points = line_points
                         st.session_state.p1 = p1
                         st.session_state.p2 = p2
+                        
+                        # Analyser la qualité
+                        st.session_state.playlist_analysis = analyze_playlist_quality(playlist)
+                        
                         st.success(_(f"✅ Playlist de {len(playlist)} tracks générée!"))
-                        st.rerun()
                     else:
                         st.error(_("❌ Échec de la génération de la playlist"))
             else:
@@ -1270,57 +1338,111 @@ with tab5:
             st.subheader(_("📋 Playlist Générée"))
             
             # ========================================
+            # MÉTRIQUES DE QUALITÉ
+            # ========================================
+            if st.session_state.playlist_analysis:
+                analysis = st.session_state.playlist_analysis
+                
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric(_("Nombre de tracks"), analysis['num_tracks'])
+                col2.metric(_("Genres uniques"), analysis['unique_genres'])
+                col3.metric(_("Distance moy."), f"{analysis['avg_distance_to_line']:.3f}")
+                col4.metric(_("Fluidité moy."), f"{analysis['avg_smoothness']:.3f}")
+                
+                with st.expander(_("📊 Analyse détaillée")):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(_("**Distribution des genres:**"))
+                        genre_dist = pd.DataFrame(
+                            list(analysis['genre_distribution'].items()),
+                            columns=[_('Genre'), _('Count')]
+                        )
+                        st.dataframe(genre_dist, use_container_width=True)
+                    
+                    with col2:
+                        st.write(_("**Statistiques de distance:**"))
+                        st.write(f"• {_('Distance max')}: {analysis['max_distance_to_line']:.3f}")
+                        st.write(f"• {_('Écart-type')}: {analysis['std_distance_to_line']:.3f}")
+                        st.write(f"• {_('Ratio diversité')}: {analysis['genre_diversity_ratio']:.1%}")
+            
+            st.markdown("---")
+            
+            # ========================================
             # VISUALISATION PLOTLY
             # ========================================
             try:
                 fig = go.Figure()
                 
-                # 1. Tous les points PCA (fond gris)
+                # 1. Tous les points PCA (fond gris clair)
                 fig.add_trace(go.Scatter(
                     x=st.session_state.pca_df['PC1'],
                     y=st.session_state.pca_df['PC2'],
                     mode='markers',
-                    marker=dict(size=8, color='lightgray', opacity=0.5),
+                    marker=dict(size=6, color='lightgray', opacity=0.4),
                     name=_('Toutes les tracks'),
-                    hovertext=st.session_state.pca_df['name'],
-                    hoverinfo='text'
+                    text=st.session_state.pca_df['name'],
+                    hovertemplate='<b>%{text}</b><br>PC1: %{x:.3f}<br>PC2: %{y:.3f}<extra></extra>'
                 ))
                 
-                # 2. Ligne de trajectoire
+                # 2. Ligne de trajectoire (ligne pointillée noire)
                 if st.session_state.line_points is not None:
                     fig.add_trace(go.Scatter(
                         x=st.session_state.line_points[:, 0],
                         y=st.session_state.line_points[:, 1],
                         mode='lines',
-                        line=dict(color='red', dash='dash', width=2),
+                        line=dict(color='black', dash='dash', width=2),
                         name=_('Trajectoire'),
                         hoverinfo='skip'
                     ))
                 
-                # 3. Points de départ et d'arrivée
+                # 3. Points cibles (croix rouges)
+                if st.session_state.line_points is not None:
+                    fig.add_trace(go.Scatter(
+                        x=st.session_state.line_points[:, 0],
+                        y=st.session_state.line_points[:, 1],
+                        mode='markers',
+                        marker=dict(size=8, color='red', symbol='x', opacity=0.5),
+                        name=_('Points cibles'),
+                        hoverinfo='skip'
+                    ))
+                
+                # 4. Point de départ (étoile bleue)
                 if st.session_state.p1 is not None:
+                    track1_name = st.session_state.pca_df.iloc[track1_idx]['name']
                     fig.add_trace(go.Scatter(
                         x=[st.session_state.p1[0]],
                         y=[st.session_state.p1[1]],
                         mode='markers',
-                        marker=dict(size=20, color='blue', symbol='star'),
+                        marker=dict(
+                            size=20, 
+                            color='blue', 
+                            symbol='star',
+                            line=dict(width=2, color='black')
+                        ),
                         name=_('Départ'),
-                        hoverinfo='text',
-                        hovertext=st.session_state.pca_df.iloc[track1_idx]['name']
+                        text=track1_name,
+                        hovertemplate=f'<b>{_("Départ")}</b><br>%{{text}}<br>PC1: %{{x:.3f}}<br>PC2: %{{y:.3f}}<extra></extra>'
                     ))
                 
+                # 5. Point d'arrivée (étoile verte)
                 if st.session_state.p2 is not None:
+                    track2_name = st.session_state.pca_df.iloc[track2_idx]['name']
                     fig.add_trace(go.Scatter(
                         x=[st.session_state.p2[0]],
                         y=[st.session_state.p2[1]],
                         mode='markers',
-                        marker=dict(size=20, color='green', symbol='star'),
+                        marker=dict(
+                            size=20, 
+                            color='green', 
+                            symbol='star',
+                            line=dict(width=2, color='black')
+                        ),
                         name=_('Arrivée'),
-                        hoverinfo='text',
-                        hovertext=st.session_state.pca_df.iloc[track2_idx]['name']
+                        text=track2_name,
+                        hovertemplate=f'<b>{_("Arrivée")}</b><br>%{{text}}<br>PC1: %{{x:.3f}}<br>PC2: %{{y:.3f}}<extra></extra>'
                     ))
                 
-                # 4. Points de la playlist
+                # 6. Points de la playlist (cercles rouges avec numéros)
                 playlist_df = pd.DataFrame(st.session_state.generated_playlist)
                 fig.add_trace(go.Scatter(
                     x=playlist_df['PC1'],
@@ -1329,36 +1451,61 @@ with tab5:
                     marker=dict(
                         size=14, 
                         color='red',
-                        line=dict(width=2, color='white')
+                        opacity=0.8,
+                        line=dict(width=1, color='black')
                     ),
                     text=playlist_df['position'],
                     textposition='top center',
-                    textfont=dict(size=10, color='black'),
+                    textfont=dict(size=9, color='black', family='Arial Black'),
                     name=_('Playlist'),
-                    hovertext=playlist_df['name'] + '<br>' + playlist_df['genre'],
-                    hoverinfo='text'
+                    customdata=playlist_df[['name', 'genre', 'distance_to_line']],
+                    hovertemplate='<b>#%{text}</b><br>%{customdata[0]}<br>Genre: %{customdata[1]}<br>Distance: %{customdata[2]:.3f}<extra></extra>'
                 ))
+                
+                # 7. Lignes de distance (lignes rouges fines)
+                for track in st.session_state.generated_playlist:
+                    target = track['target_point']
+                    actual = track['actual_point']
+                    fig.add_trace(go.Scatter(
+                        x=[target[0], actual[0]],
+                        y=[target[1], actual[1]],
+                        mode='lines',
+                        line=dict(color='red', width=1, dash='solid'),
+                        opacity=0.3,
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
                 
                 # Configuration du layout
                 fig.update_layout(
-                    title=_('Visualisation de la Playlist dans l\'espace PCA'),
+                    title={
+                        'text': _('Visualisation de la Playlist dans l\'espace PCA'),
+                        'x': 0.5,
+                        'xanchor': 'center'
+                    },
                     xaxis_title='PC1',
                     yaxis_title='PC2',
-                    height=600,
+                    height=700,
                     showlegend=True,
                     legend=dict(
                         yanchor="top",
                         y=0.99,
-                        xanchor="left",
-                        x=0.01
+                        xanchor="right",
+                        x=0.99,
+                        bgcolor='rgba(255,255,255,0.8)'
                     ),
-                    hovermode='closest'
+                    hovermode='closest',
+                    plot_bgcolor='white',
+                    xaxis=dict(gridcolor='lightgray', showgrid=True),
+                    yaxis=dict(gridcolor='lightgray', showgrid=True)
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
                 
             except Exception as e:
                 st.error(f"Erreur lors de la visualisation : {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
             
             # ========================================
             # LISTE DES TRACKS
@@ -1371,7 +1518,12 @@ with tab5:
                 col1, col2, col3, col4, col5 = st.columns([0.5, 3, 1, 1, 1])
                 
                 with col1:
-                    st.markdown(f"**#{track_info['position']}**")
+                    if track_info['position'] == 1:
+                        st.markdown("🚀")
+                    elif track_info['position'] == len(st.session_state.generated_playlist):
+                        st.markdown("🎯")
+                    else:
+                        st.markdown(f"**{track_info['position']}**")
                 
                 with col2:
                     st.markdown(f"**{track_info['name']}**")
@@ -1387,13 +1539,12 @@ with tab5:
                         st.markdown("⚪ Local")
                 
                 with col4:
-                    st.markdown(f"📏 {track_info['distance']:.2f}")
+                    st.markdown(f"📏 {track_info['distance_to_line']:.3f}")
                 
                 with col5:
-                    if track_info['position'] == 1:
-                        st.markdown(_("🚀 **Départ**"))
-                    elif track_info['position'] == len(st.session_state.generated_playlist):
-                        st.markdown(_("🎯 **Arrivée**"))
+                    if track_info.get('preview_url'):
+                        if st.button("🎵", key=f"play_{track_info['position']}"):
+                            st.audio(track_info['preview_url'], format="audio/mp3")
             
             # ========================================
             # EXPORT VERS SPOTIFY
@@ -1415,7 +1566,7 @@ with tab5:
                 with col2:
                     playlist_desc = st.text_input(
                         _("Description:"), 
-                        value="Générée par IA",
+                        value=_("Générée par IA - Transition musicale progressive"),
                         key="playlist_desc_input"
                     )
                 
@@ -1447,11 +1598,13 @@ with tab5:
                 st.warning(_("⚠️ Aucune track Spotify dans cette playlist"))
             
             # Bouton pour réinitialiser
-            if st.button(_("🔄 Générer une nouvelle playlist"), key="reset_playlist_btn"):
+            st.markdown("---")
+            if st.button(_("🔄 Générer une nouvelle playlist"), type="secondary", key="reset_playlist_btn"):
                 st.session_state.generated_playlist = None
                 st.session_state.line_points = None
                 st.session_state.p1 = None
                 st.session_state.p2 = None
+                st.session_state.playlist_analysis = None
                 st.rerun()
 
 
