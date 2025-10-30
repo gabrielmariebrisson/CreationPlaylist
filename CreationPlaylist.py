@@ -974,7 +974,7 @@ with st.sidebar:
         st.rerun()
 
 # Tabs principaux
-tab1, tab2, tab3, tab4, tab5 = st.tabs([_("🏠 Accueil"), _("🎧 Mes Musiques"), _("🔍 Recherche"), _("📊 Analyse"), _("🎨 Playlist")])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([_("🏠 Accueil"), _("🎧 Mes Musiques"), _("🔍 Recherche"), _("📊 Analyse"), _("🎨 Playlist"), _("🤔 Explications")])
 
 # Tab 1: Accueil
 with tab1:
@@ -1607,7 +1607,143 @@ with tab5:
                 st.session_state.playlist_analysis = None
                 st.rerun()
 
+with tab6:
+    st.header(_("🤔 Explications"))
+    IMAGE_DIR = "templates/assets/images/"
+    PCA_IMAGE = IMAGE_DIR + "pca.png"
+    TSNE_IMAGE = IMAGE_DIR + "t-sne.png"
+    PLAYLIST_IMAGE = IMAGE_DIR + "creation_playlist.png"
+    SPECT_IMAGE = IMAGE_DIR +"ConvolutionSize.png"
 
+    st.markdown(_("""
+    **Auteurs :** Gabriel Marie–Brisson, Clément Delmas, Thibault Pottier, Aurélien Gauthier
+                    """))
+    st.markdown(_("""
+    **Enseignant référent :** Charles Brazier
+    """))
+
+    st.header(_("1. Présentation"))
+
+    st.subheader(_("Contexte et Objectif"))
+    st.markdown(_("""
+    Ce projet a pour objectif principal de développer une **Intelligence Artificielle capable de classifier des musiques par genre** afin de générer des **playlists cohérentes et ordonnées par similarité**. L'approche repose sur un algorithme de *Machine Learning* qui analyse les propriétés sonores des morceaux.
+
+    Le processus de développement a été scindé en trois phases principales :
+    1.  Le **pré-traitement des données**, notamment la transformation des fichiers audio en Spectrogrammes de Mel.
+    2.  La **réalisation du classifieur** basé sur un réseau neuronal convolutionnel (CNN).
+    3.  L'**implémentation de l'algorithme de suggestion musicale** (basé sur la projection des résultats via PCA ou t-SNE pour déterminer le chemin de lecture le plus cohérent).
+
+    Pour ce faire nous nous sommes appuyés sur ce blog post de [**@Sander Dieleman**](https://sander.ai/2014/08/05/spotify-cnns.html) qui explique comment le modèle de suggestion musicale peut être implémenté avec des techniques de deep Learning.
+    """))
+
+    st.subheader(_("Données"))
+    st.markdown(_("""
+    Le modèle a été entraîné sur le **GTZAN Dataset** pour la classification des genres musicaux. Ce jeu de données est composé de 100 fichiers audio de 30 secondes chacun, répartis équitablement entre 10 genres musicaux distincts : Blues, Classical, Country, Disco, Hip-hop, Jazz, Metal, Pop, Reggae, et Rock.
+    Comme vous pouvez l'imaginer, le fait qu'il y est que 100 fichiers audio de 30 secondes ne suffisent pas à couvrir tous les genres musicaux est un point important à étudier. Ainsi dans le cas d'une musique qui ne correspondrait pas à un des 10 genres, le modèle pourrait avoir des difficultés à la classifier correctement.
+    Pour avoir de meilleures performances, il serait pertinent d'augmenter la taille du dataset en ajoutant plus de musiques et plus de genres.
+    Le pré-traitement essentiel consiste à convertir les segments audio de 30 secondes en **Spectrogrammes de Mel**, une représentation graphique du spectre de fréquences adaptée à la perception auditive humaine.
+    """))
+
+    # --- 2. Architecture du Modèle ---
+    st.header(_("2. Architecture du Modèle"))
+
+    st.markdown(_("""
+    Le classifieur est basé sur une architecture de **Réseau Neuronal Convolutionnel (CNN)** nommée `CNN_music`. Cette architecture est conçue pour extraire des caractéristiques pertinentes directement à partir des Spectrogrammes de Mel.
+    """))
+
+    st.subheader(_("Structure du `CNN_music`"))
+    st.markdown(_("""
+    Le modèle utilise une succession de couches de convolution, de normalisation par lots (`BatchNorm2d`), de fonctions d'activation (`ReLU`) et de couches de regroupement (`MaxPool2d`), suivies de couches entièrement connectées (`Linear`) pour la classification finale.
+
+    Une caractéristique notable de cette architecture est l'intégration de modules d'attention spécifiques : les **CBAM** (*Convolutional Block Attention Module*).
+    """))
+    architecture_data = {
+        _("Couche"): [
+            _("Couches Convolutionnelles (Conv)"),
+            _("Modules CBAM"),
+            _("Couches Entièrement Connectées (FC)")
+        ],
+        _("Type"): [
+            _("`Conv2d`, `BatchNorm2d`, `ReLU`, `MaxPool2d`"),
+            _("`CBAM`"),
+            _("`Linear`, `BatchNorm1d`, `Dropout2d`")
+        ],
+        _("Rôle Principal"): [
+            _("Extraction hiérarchique des caractéristiques spectrales et temporelles du spectrogramme de Mel."),
+            _("Renforcement des caractéristiques importantes via des mécanismes d'attention."),
+            _("Transformation en prédictions de probabilités pour les 10 genres musicaux.")
+        ]
+    }
+    st.table(pd.DataFrame(architecture_data))
+
+
+    st.markdown(_("""
+    L'intégration des modules **CBAM** vise à améliorer la performance du modèle en lui permettant de se concentrer dynamiquement sur les régions et les canaux (filtres) les plus informatifs du Spectrogramme de Mel pour chaque musique.
+    """))
+
+    # --- 3. Résultats ---
+    st.header(_("3. Résultats"))
+
+    st.markdown(_(f"Le modèle a été entraîné pendant **30 minutes** et ses performances ont été évaluées sur des ensembles de validation et de test."))
+
+    st.subheader(_("Performances Globales (Validation)"))
+    validation_data = {
+        _("Métrique"): [_("Loss du Modèle"), _("Précision (Accuracy)")],
+        _("Valeur"): ["0.782", "73.0 %"]
+    }
+    st.table(pd.DataFrame(validation_data))
+
+    st.subheader(_("Performances Détaillées (Test)"))
+    test_data = {
+        _("Classe"): [_("Blues"), _("Classical"), _("Country"), _("Disco"), _("Hip-hop"), _("Jazz"), _("Metal"), _("Pop"), _("Reggae"), _("Rock")],
+        _("Précision"): ["100.0 %", "80.0 %", "60.0 %", "40.0 %", "80.0 %", "70.0 %", "90.0 %", "80.0 %", "70.0 %", "60.0 %"]
+    }
+    st.table(pd.DataFrame(test_data))
+
+    st.markdown(_("""
+    **Analyse :** Les résultats montrent une excellente performance pour le genre **Blues** (100 %) et une très bonne performance pour le **Metal** (90 %). Cependant, le modèle rencontre des difficultés significatives avec le genre **Disco** (40 %), suggérant un chevauchement des caractéristiques sonores de ce genre avec d'autres, ou un besoin d'ajustement des hyperparamètres pour cette classe.
+    """))
+
+    st.subheader(_("Visualisation des Résultats"))
+
+    st.markdown(_("#### Projection 2D (PCA)"))
+    st.image(PCA_IMAGE, caption=_("Projection 2D des données via PCA"))
+    st.markdown(_("""
+    La figure montre la projection des données sur les deux premières composantes principales (PC1 et PC2). On observe une certaine agrégation des points par genre, mais aussi un chevauchement important, indiquant que la simple PCA ne suffit pas à isoler clairement tous les genres.
+    """))
+
+    st.markdown(_("#### Visualisation t-SNE"))
+    st.image(TSNE_IMAGE, caption=_("Visualisation t-SNE des genres musicaux"))
+    st.markdown(_("""
+    La visualisation t-SNE, plus apte à révéler la structure locale des données, montre une **séparation beaucoup plus nette** des 10 clusters de genres musicaux, confirmant que le modèle a réussi à apprendre des représentations distinctes pour chaque catégorie.
+    """))
+
+    st.markdown(_("#### Suggestion de Playlist"))
+    st.image(PLAYLIST_IMAGE, caption=_("Génération de playlist par chemin de similarité"))
+    st.markdown(_("""
+    La phase de suggestion musicale utilise cette projection pour créer un "chemin" cohérent entre deux morceaux (début et fin), représentant la playlist ordonnée par similarité. L'image illustre un exemple de ce chemin dans l'espace de projection.
+    """))
+
+    st.markdown(_("#### Spectrogramme"))
+    st.image(SPECT_IMAGE, caption=_("Spectrogramme de Mel d'un extrait audio"))
+    st.markdown(_("""
+    Le spectrogramme de Mel est la représentation visuelle des caractéristiques fréquentielles d'un extrait audio, utilisée comme entrée pour le modèle CNN."""))
+
+    # --- 4. Coût de Développement ---
+    st.header(_("4. Coût de Développement"))
+
+    st.markdown(_("Le projet a été mené sur la durée d'un **semestre universitaire**, représentant le temps de développement et de recherche principal."))
+
+    cost_data = {
+        _("Catégorie de Coût"): [_("Temps de Développement"), _("Coûts Matériels"), _("Coûts Logiciels"), _("Coûts d'Infrastructure")],
+        _("Détail"): [
+            _("Un semestre (recherche, codage, tests, documentation)."),
+            _("**Nuls**. L'entraînement du modèle a été réalisé localement sur un **MacBook M1**."),
+            _("**Nuls**. Utilisation exclusive de bibliothèques et d'outils *open source* (ex: PyTorch, librosa)."),
+            _("**Nuls**. Aucune utilisation de serveurs *cloud* ou de GPU dédiés n'a été nécessaire.")
+        ]
+    }
+    st.table(pd.DataFrame(cost_data))
 # Footer
 st.markdown(_(
     """
