@@ -465,7 +465,7 @@ def get_spotify_client():
             try:
                 # Échanger le code contre un token
                 token_info = sp_oauth.get_access_token(code, as_dict=True, check_cache=False)
-                
+                st.info(token_info)
                 if token_info:
                     # ✅ Sauvegarder UNIQUEMENT dans session_state (pas de fichier)
                     st.session_state.spotify_token = token_info
