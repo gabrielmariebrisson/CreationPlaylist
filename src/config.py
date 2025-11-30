@@ -10,31 +10,31 @@ FEATURE_VIEW_SIZE: int = 1536  # Taille pour le view des features
 # --- Configuration Genres ---
 NUM_GENRES: int = 10  # Nombre total de genres musicaux
 GENRE_LABEL_MAPPING: dict[int, str] = {
-    0: 'blues',
-    1: 'classical',
-    2: 'country',
-    3: 'disco',
-    4: 'hiphop',
-    5: 'jazz',
-    6: 'metal',
-    7: 'pop',
-    8: 'reggae',
-    9: 'rock'
+    0: "blues",
+    1: "classical",
+    2: "country",
+    3: "disco",
+    4: "hiphop",
+    5: "jazz",
+    6: "metal",
+    7: "pop",
+    8: "reggae",
+    9: "rock",
 }
 GENRES_LIST: list[str] = list(GENRE_LABEL_MAPPING.values())
 
 # Couleurs pour la visualisation des genres (Plotly)
 GENRE_COLORS: dict[str, str] = {
-    'blues': '#1f77b4',
-    'classical': '#ff7f0e',
-    'country': '#2ca02c',
-    'disco': '#d62728',
-    'hiphop': '#9467bd',
-    'jazz': '#8c564b',
-    'metal': '#e377c2',
-    'pop': '#7f7f7f',
-    'reggae': '#bcbd22',
-    'rock': '#17becf'
+    "blues": "#1f77b4",
+    "classical": "#ff7f0e",
+    "country": "#2ca02c",
+    "disco": "#d62728",
+    "hiphop": "#9467bd",
+    "jazz": "#8c564b",
+    "metal": "#e377c2",
+    "pop": "#7f7f7f",
+    "reggae": "#bcbd22",
+    "rock": "#17becf",
 }
 
 # --- Configuration Fallback (quand modèle non chargé) ---
@@ -83,6 +83,5 @@ LANGUAGES: dict[str, str] = {
     "ja": "🇯🇵 日本語",
     "zh-CN": "🇨🇳 中文",
     "ar": "🇸🇦 العربية",
-    "ru": "🇷🇺 Русский"
+    "ru": "🇷🇺 Русский",
 }
-

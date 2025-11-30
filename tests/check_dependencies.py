@@ -4,10 +4,10 @@
 import sys
 
 REQUIRED_PACKAGES = {
-    'pytest': 'pytest',
-    'numpy': 'numpy',
-    'pandas': 'pandas',
-    'sklearn': 'scikit-learn',
+    "pytest": "pytest",
+    "numpy": "numpy",
+    "pandas": "pandas",
+    "sklearn": "scikit-learn",
 }
 
 missing_packages = []
@@ -34,4 +34,3 @@ if missing_packages:
 else:
     print("\n✅ Toutes les dépendances sont installées!")
     sys.exit(0)
-
