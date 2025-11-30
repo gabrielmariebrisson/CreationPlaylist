@@ -18,9 +18,13 @@ import plotly.graph_objects as go
 import requests
 import json
 from datetime import datetime
-from templates.assets.music.architecture import SimpleCNN
 import matplotlib.pyplot as plt
 load_dotenv()
+
+# Imports des nouvelles classes modulaires
+from src.services.spotify_service import SpotifyService
+from src.models.audio_classifier import AudioClassifier
+from src.logic.playlist_generator import PlaylistPathfinder
 
 from deep_translator import GoogleTranslator
 
@@ -98,6 +102,27 @@ SPOTIFY_SCOPE = "user-library-read user-top-read playlist-modify-public playlist
 DEEZER_BASE_URL = "https://api.deezer.com"
 
 
+# --- INITIALISATION DES SERVICES ---
+@st.cache_resource
+def init_audio_classifier(model_path):
+    """Initialise le classifieur audio avec cache Streamlit."""
+    try:
+        return AudioClassifier(model_path)
+    except Exception as e:
+        st.error(f"Erreur chargement modèle: {str(e)}")
+        return None
+
+@st.cache_resource
+def init_spotify_service():
+    """Initialise le service Spotify avec cache Streamlit."""
+    return SpotifyService(session_state=st.session_state)
+
+@st.cache_resource
+def init_playlist_pathfinder():
+    """Initialise le générateur de playlist avec cache Streamlit."""
+    return PlaylistPathfinder()
+
+
 # --- FONCTIONS DEEZER ---
 def search_deezer_tracks(query, limit=10):
     """Recherche des tracks sur Deezer"""
@@ -152,204 +177,54 @@ def download_deezer_preview(preview_url, output_path):
 
 
 # --- ARCHITECTURE DU MODÈLE ---
-def convert_song_to_matrix(audio_path, size=599):
-    """Convertit un fichier audio en spectrogramme normalisé"""
-    try:
-        y, sr = librosa.load(audio_path, duration=30)
-        n_fft = int((sr/10) / 2 + 3)
-        D = np.abs(librosa.stft(y, hop_length=int(n_fft)))
-        spectrogram = librosa.feature.melspectrogram(S=D, sr=sr)
-        S = librosa.util.fix_length(spectrogram, size=size)
-        S_db = librosa.power_to_db(S, ref=np.max)
-        S_db_norm = (S_db - S_db.min()) / (S_db.max() - S_db.min() + 1e-9)
-        return S_db_norm
-    except Exception as e:
-        st.error(f"Erreur conversion audio: {str(e)}")
-        return None
+# Les fonctions suivantes sont maintenant gérées par AudioClassifier
+# convert_song_to_matrix, load_model, extract_features, analyze_audio_genre
 
-@st.cache_resource
-def load_model(model_path):
-    """Charge le modèle CNN pré-entraîné"""
-    try:
-        model = SimpleCNN()
-        state_dict = torch.load(model_path, map_location=torch.device('cpu'))
-        model.load_state_dict(state_dict)
-        model.eval()
-        return model
-    except Exception as e:
-        st.error(f"Erreur chargement modèle: {str(e)}")
-        return None
-
-def extract_features(model, spectrogram_tensor):
-    """Extrait les features avant la couche de classification"""
-    with torch.no_grad():
-        x = spectrogram_tensor
-        x = model.norm1(x)
-        x = model.conv1(x)
-        x = model.relu(x)
-        x = model.cbam1(x)
-        x = model.pool1(x)
-        x = torch.permute(x,(0,2,1,3))
-        
-        x = model.norm2(x)
-        x = model.conv2(x)
-        x = model.relu(x)
-        x = model.cbam1(x)
-        x = model.pool2(x)
-        x = torch.permute(x,(0,2,1,3))
-        
-        x = model.norm3(x)
-        x = model.conv3(x)
-        x = model.relu(x)
-        x = model.cbam2(x)
-        x = model.pool2(x)
-        x = torch.permute(x,(0,2,1,3))
-        
-        x = model.norm4(x)
-        x = model.conv4(x)
-        x = model.cbam2(x)
-        x = model.relu(x)
-        x = torch.permute(x,(0,2,1,3))
-        
-        mean_values = torch.mean(x, dim=3, keepdim=True)
-        max_values, _ = torch.max(x, dim=3, keepdim=True)
-        l2_norm = torch.linalg.norm(x, dim=3, ord=2, keepdim=True)
-        
-        x = torch.cat([max_values, mean_values, l2_norm], dim=1)
-        x = x.view(-1, 1536)
-        
-        x = model.normfc2(x)
-        x = model.fc2(x)
-        features = F.relu(x)
-        
-        return features.cpu().numpy()
-
-def analyze_audio_genre(audio_path, model):
-    """Analyse un fichier audio et prédit son genre"""
-    spectrogram = convert_song_to_matrix(audio_path)
+def analyze_audio_genre(audio_path, classifier):
+    """
+    Wrapper pour compatibilité avec l'ancien code.
+    Analyse un fichier audio et prédit son genre.
     
-    if spectrogram is None:
-        return None, None, None, None
+    Args:
+        audio_path: Chemin vers le fichier audio
+        classifier: Instance d'AudioClassifier (ou None pour compatibilité)
     
-    if model is None:
+    Returns:
+        Tuple (genre, confidence, features, probabilities) ou (None, None, None, None)
+    """
+    if classifier is None:
         genre_id = np.random.randint(0, 10)
         confidence = np.random.uniform(0.6, 0.95)
         return LABEL_MAPPING[genre_id], confidence, None, None
     
     try:
-        spectrogram_tensor = torch.tensor(spectrogram).unsqueeze(0).unsqueeze(0).float()
-        features = extract_features(model, spectrogram_tensor)
-        
-        with torch.no_grad():
-            output = model(spectrogram_tensor)
-            probabilities = F.softmax(output, dim=1)
-            genre_id = torch.argmax(probabilities, dim=1).item()
-            confidence = probabilities[0][genre_id].item()
-            all_probs = probabilities[0].cpu().numpy()
-        
-        return LABEL_MAPPING[genre_id], confidence, features[0], all_probs
+        result = classifier.predict(audio_path, return_features=True, return_probabilities=True)
+        return result['genre'], result['confidence'], result.get('features'), result.get('probabilities')
     except Exception as e:
         st.error(f"Erreur prédiction: {str(e)}")
         return None, None, None, None
 
-def perform_pca(features_list):
-    """Effectue une PCA sur les features extraites"""
-    if len(features_list) < 2:
-        return None, None, None
-    
-    features_array = np.array(features_list)
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features_array)
-    
-    pca = PCA(n_components=2)
-    features_pca = pca.fit_transform(features_scaled)
-    
-    return features_pca, pca, scaler
+# Les fonctions suivantes sont maintenant gérées par PlaylistPathfinder
+# perform_pca, perform_tsne, perform_dimensionality_reduction, generate_playlist_line
 
-def perform_tsne(features_list, random_state=42, perplexity=30):
-    """Effectue une t-SNE sur les features extraites"""
-    from sklearn.manifold import TSNE
-    
-    if len(features_list) < 2:
-        return None, None, None
-    
-    features_array = np.array(features_list)
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features_array)
+def perform_pca(features_list, pathfinder):
+    """Wrapper pour compatibilité - Effectue une PCA sur les features extraites"""
+    return pathfinder.perform_pca(features_list)
 
-    n_samples = len(features_list)
-    perplexity = min(perplexity, n_samples - 1)
-    
-    # Utiliser max_iter au lieu de n_iter (deprecated depuis sklearn 1.5)
-    tsne = TSNE(n_components=2,perplexity=perplexity, random_state=random_state, max_iter=1000)
-    features_tsne = tsne.fit_transform(features_scaled)
-    
-    return features_tsne, tsne, scaler
+def perform_tsne(features_list, pathfinder, random_state=42, perplexity=30):
+    """Wrapper pour compatibilité - Effectue une t-SNE sur les features extraites"""
+    return pathfinder.perform_tsne(features_list, random_state=random_state, perplexity=perplexity)
 
-def perform_dimensionality_reduction(features_list, method='pca', **kwargs):
-    """Effectue une réduction de dimensionnalité (PCA ou t-SNE)"""
-    if method == 'tsne':
-        return perform_tsne(features_list, **kwargs)
-    else:
-        return perform_pca(features_list)
+def perform_dimensionality_reduction(features_list, pathfinder, method='pca', **kwargs):
+    """Wrapper pour compatibilité - Effectue une réduction de dimensionnalité (PCA ou t-SNE)"""
+    return pathfinder.perform_dimensionality_reduction(features_list, method=method, **kwargs)
 
-
-def generate_playlist_line(pca_df, track1_idx, track2_idx, num_tracks=10):
+def generate_playlist_line(pca_df, track1_idx, track2_idx, pathfinder, num_tracks=10):
     """
-    Génère une playlist progressive (linéaire) entre deux morceaux
+    Wrapper pour compatibilité - Génère une playlist progressive (linéaire) entre deux morceaux
     """
-
     try:
-        if track1_idx >= len(pca_df) or track2_idx >= len(pca_df):
-            st.error(f"Indices invalides : {track1_idx}, {track2_idx}")
-            return None, None, None, None
-
-        if track1_idx == track2_idx:
-            st.warning("Les deux tracks doivent être différentes")
-            return None, None, None, None
-
-        # Points PCA
-        p1 = np.array([pca_df.iloc[track1_idx]['PC1'], pca_df.iloc[track1_idx]['PC2']])
-        p2 = np.array([pca_df.iloc[track2_idx]['PC1'], pca_df.iloc[track2_idx]['PC2']])
-        t_values = np.linspace(0, 1, num_tracks)
-        line_points = np.array([p1 + t * (p2 - p1) for t in t_values])
-
-        playlist_tracks = []
-        used_tracks = set()
-
-        for i, target_point in enumerate(line_points):
-            distances = []
-            for idx, row in pca_df.iterrows():
-                if row['track_id'] not in used_tracks:
-                    track_point = np.array([row['PC1'], row['PC2']])
-                    distance = np.linalg.norm(track_point - target_point)
-                    distances.append((distance, row['track_id'], row['genre'], track_point, row['name'], row['artists'],  row['confidence'], row['uri'], row['spotify_id'], row['deezer_id'], row['preview_url']))
-
-            if distances:
-                distances.sort(key=lambda x: x[0])
-                closest_distance, closest_track, closest_genre, closest_point, closest_name, closest_artists, closest_confidence, closest_uri, closest_spotify_id, closest_deezer_id, closest_preview_url = distances[0]
-
-                playlist_tracks.append({
-                    'position': i + 1,
-                    'track_id': idx,
-                    'name': closest_name,
-                    'artists': closest_artists,
-                    'genre': closest_genre,
-                    'confidence': closest_confidence,
-                    'uri': closest_uri,
-                    'spotify_id': closest_spotify_id,
-                    'deezer_id': closest_deezer_id,
-                    'preview_url': closest_preview_url,
-                    'distance_to_line': closest_distance,
-                    'target_point': target_point,
-                    'actual_point': closest_point,
-                    'PC1': closest_point[0],
-                    'PC2': closest_point[1]
-                })
-            used_tracks.add(closest_track)
-
-        return playlist_tracks, line_points, p1, p2
-
+        return pathfinder.generate_playlist_line(pca_df, track1_idx, track2_idx, num_tracks)
     except Exception as e:
         st.error(f"Erreur génération playlist: {e}")
         import traceback
@@ -415,183 +290,66 @@ def visualize_playlist_transition(pca_df, playlist, line_points, p1, p2, track1_
 
 
 
-def analyze_playlist_quality(playlist):
+def analyze_playlist_quality(playlist, pathfinder):
     """
-    Analyse la qualité d'une playlist générée
+    Wrapper pour compatibilité - Analyse la qualité d'une playlist générée
     Compatible avec mode transition ET mode genre
     """
-    if not playlist:
-        return None
-    
     try:
-        genres_in_playlist = [track['genre'] for track in playlist]
-        unique_genres = len(set(genres_in_playlist))
-        genre_distribution = pd.Series(genres_in_playlist).value_counts()
-        
-        distances = [track.get('distance_to_line', 0) for track in playlist]
-        avg_distance = np.mean(distances) if distances else 0
-        std_distance = np.std(distances) if distances else 0
-        max_distance = np.max(distances) if distances else 0
-        
-        # Calcul de la fluidité (smoothness) - seulement si PC1/PC2 disponibles
-        smoothness_distances = []
-        for i in range(len(playlist) - 1):
-            p1 = np.array([playlist[i]['PC1'], playlist[i]['PC2']])
-            p2 = np.array([playlist[i+1]['PC1'], playlist[i+1]['PC2']])
-            smoothness_distances.append(np.linalg.norm(p2 - p1))
-
-        avg_smoothness = np.mean(smoothness_distances) if smoothness_distances else 0
-
-        analysis = {
-            'num_tracks': len(playlist),
-            'unique_genres': unique_genres,
-            'genre_diversity_ratio': unique_genres / len(playlist),
-            'avg_distance_to_line': avg_distance,
-            'std_distance_to_line': std_distance,
-            'max_distance_to_line': max_distance,
-            'avg_smoothness': avg_smoothness,
-            'genre_distribution': genre_distribution.to_dict()
-        }
-        
-        return analysis
-        
+        return pathfinder.analyze_playlist_quality(playlist)
     except Exception as e:
         st.error(f"Erreur lors de l'analyse : {str(e)}")
         return None
 
 # --- FONCTIONS SPOTIFY ---
+# Les fonctions suivantes sont maintenant gérées par SpotifyService
+# get_spotify_oauth, get_spotify_client, export_playlist_to_spotify
 
 def get_spotify_oauth():
-    """OAuth pour Spotify"""
-    CLIENT_ID = os.getenv('CLIENT_ID_SPOTIFY')
-    CLIENT_SECRET = os.getenv('CLIENT_SECRET_SPOTIFY')
-    REDIRECT_URI = os.getenv('REDIRECT_URI_SPOTIFY', 'http://localhost:8501')
-    
-    if not CLIENT_ID or not CLIENT_SECRET:
-        return None
-    
-    return SpotifyOAuth(
-        client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
-        redirect_uri=REDIRECT_URI,
-        scope=SPOTIFY_SCOPE,
-        cache_path=None,
-        show_dialog=False,
-        open_browser=False
-    )
+    """Wrapper pour compatibilité - OAuth pour Spotify"""
+    spotify_service = init_spotify_service()
+    return spotify_service.auth_manager
 
 def get_spotify_client():
-    """Client Spotify avec refresh token permanent depuis env"""
-    REFRESH_TOKEN = os.getenv('REFRESH_TOKEN_SPOTIFY')
-    
-    if not REFRESH_TOKEN:
+    """Wrapper pour compatibilité - Client Spotify avec refresh token permanent depuis env"""
+    spotify_service = init_spotify_service()
+    client = spotify_service.get_client()
+    if not client:
         st.error(_("❌ REFRESH_TOKEN_SPOTIFY manquant dans .env"))
-        return None
-    
-    sp_oauth = get_spotify_oauth()
-    if not sp_oauth:
-        return None
-    
-    # Charger ou créer token_info
-    if 'spotify_service_token' not in st.session_state:
-        st.session_state.spotify_service_token = {
-            'refresh_token': REFRESH_TOKEN,
-            'expires_at': 0
-        }
-    
-    token_info = st.session_state.spotify_service_token
-    
-    # Vérifier expiration
-    if sp_oauth.is_token_expired(token_info):
-        try:
-            new_token_info = sp_oauth.refresh_access_token(REFRESH_TOKEN)
-            
-            if 'refresh_token' not in new_token_info:
-                new_token_info['refresh_token'] = REFRESH_TOKEN
-            
-            st.session_state.spotify_service_token = new_token_info
-            token_info = new_token_info
-        except Exception as e:
-            st.error(_(f"❌ Erreur refresh: {e}"))
-            return None
-    
-    return spotipy.Spotify(auth=token_info['access_token'])
+    return client
 
-def export_playlist_to_spotify(spotify_client, playlist_tracks, playlist_name, playlist_description=""):
-    """Exporte une playlist vers Spotify avec recherche automatique des URIs manquants"""
-    try:
-        if not spotify_client:
-            st.error(_("❌ Client Spotify non disponible"))
-            return None
-        
-        user_info = spotify_client.current_user()
-        user_id = user_info['id']
-        
-        playlist = spotify_client.user_playlist_create(
-            user=user_id,
-            name=playlist_name,
-            public=False,
-            description=playlist_description
-        )
-        
-        track_uris = []
-        skipped = 0
-        found_on_search = 0
-        
-        for track in playlist_tracks:
-            uri = None
-            
-            # Essayer d'obtenir l'URI existant
-            if track.get('uri') and track['uri'].startswith('spotify:track:'):
-                uri = track['uri']
-            elif track.get('spotify_id'):
-                spotify_id = track['spotify_id']
-                if isinstance(spotify_id, str) and len(spotify_id) == 22 and not spotify_id.isdigit():
-                    uri = f"spotify:track:{spotify_id}"
-            
-            # Si pas d'URI valide, chercher sur Spotify
-            if not uri:
-                track_name = track.get('name', '')
-                artists = track.get('artists', '')
-                
-                if track_name and artists:
-                    try:
-                        query = f"{track_name} {artists}"
-                        results = spotify_client.search(q=query, type='track', limit=1)
-                        
-                        if results['tracks']['items']:
-                            found_track = results['tracks']['items'][0]
-                            uri = found_track['uri']
-                            found_on_search += 1
-                            st.info(_(f"🔍 Trouvé sur Spotify: {track_name}"))
-                    except Exception as e:
-                        st.warning(_(f"⚠️ Recherche échouée pour: {track_name}"))
-            
-            if uri:
-                track_uris.append(uri)
-            else:
-                skipped += 1
-                st.warning(_(f"⚠️ Ignoré: {track.get('name', 'Unknown')}"))
-        
-        if track_uris:
-            for i in range(0, len(track_uris), 100):
-                batch = track_uris[i:i+100]
-                spotify_client.playlist_add_items(playlist['id'], batch)
-            
-            msg = f"✅ Playlist '{playlist_name}' créée avec {len(track_uris)} titres!"
-            if found_on_search > 0:
-                msg += f" ({found_on_search} trouvés par recherche)"
-            if skipped > 0:
-                msg += f" ({skipped} ignorés)"
-            st.success(_(msg))
-            st.markdown(f"[🎵 Ouvrir dans Spotify]({playlist['external_urls']['spotify']})")
-            return playlist
-        else:
-            st.warning(_("⚠️ Aucun URI Spotify valide trouvé"))
-            return None
-    except Exception as e:
-        st.error(_(f"❌ Erreur lors de la création de la playlist: {e}"))
+def export_playlist_to_spotify(spotify_service, playlist_tracks, playlist_name, playlist_description=""):
+    """Wrapper pour compatibilité - Exporte une playlist vers Spotify avec recherche automatique des URIs manquants"""
+    if not spotify_service:
+        st.error(_("❌ Service Spotify non disponible"))
         return None
+    
+    def callback_info(msg):
+        st.info(_(msg))
+    
+    def callback_warning(msg):
+        st.warning(_(msg))
+    
+    def callback_success(msg):
+        st.success(_(msg))
+    
+    def callback_error(msg):
+        st.error(_(msg))
+    
+    result = spotify_service.export_playlist(
+        playlist_tracks,
+        playlist_name,
+        playlist_description,
+        callback_info=callback_info,
+        callback_warning=callback_warning,
+        callback_success=callback_success,
+        callback_error=callback_error
+    )
+    
+    if result:
+        st.markdown(f"[🎵 Ouvrir dans Spotify]({result['external_urls']['spotify']})")
+    
+    return result
 
 
 # --- FONCTIONS D'ANALYSE ---
@@ -639,30 +397,17 @@ def find_deezer_track_from_spotify(track_name, artist_name):
         st.warning(f"Erreur recherche: {str(e)}")
         return None, None
     
-def match_deezer_to_spotify(track_name, artist_name, spotify_client):
-    """Trouve le track Spotify correspondant à un track Deezer"""
-    try:
-        query = f"{track_name} {artist_name}"
-        results = spotify_client.search(q=query, type='track', limit=5)
-        
-        if results['tracks']['items']:
-            # Retourner le premier résultat (meilleur match)
-            best_match = results['tracks']['items'][0]
-            return {
-                'spotify_id': best_match['id'],
-                'uri': best_match['uri'],
-                'name': best_match['name'],
-                'artists': ', '.join([a['name'] for a in best_match['artists']])
-            }
+def match_deezer_to_spotify(track_name, artist_name, spotify_service):
+    """Wrapper pour compatibilité - Trouve le track Spotify correspondant à un track Deezer"""
+    if not spotify_service:
         return None
-    except Exception as e:
-        print(f"Erreur matching Spotify: {e}")
-        return None
+    return spotify_service.match_deezer_to_spotify(track_name, artist_name)
 
 def process_track_analysis(track, track_data):
     """Traite l'analyse d'une track (recherche automatique sur Deezer si Spotify)"""
     try:
-        if st.session_state.model:
+        classifier = st.session_state.audio_classifier
+        if classifier:
             with st.spinner(_("Analyse en cours...")):
                 temp_dir = tempfile.mkdtemp()
                 audio_path = os.path.join(temp_dir, f"{track_data['type']}_{track_data['index']}.mp3")
@@ -709,7 +454,7 @@ def process_track_analysis(track, track_data):
                 if download_success:
                     # Analyser le fichier audio
                     genre, confidence, features, probs = analyze_audio_genre(
-                        audio_path, st.session_state.model
+                        audio_path, classifier
                     )
                     
                     if genre:
@@ -720,12 +465,12 @@ def process_track_analysis(track, track_data):
                         # Matcher avec Spotify si c'est une track Deezer
                         spotify_match = None
                         if track_data['type'] in ['deezer', 'search_deezer']:
-                            spotify_client = get_spotify_client()
-                            if spotify_client:
+                            spotify_service = st.session_state.spotify_service
+                            if spotify_service:
                                 spotify_match = match_deezer_to_spotify(
                                     track['name'], 
                                     artists, 
-                                    spotify_client
+                                    spotify_service
                                 )
                         
                         # Créer l'objet track analysé
@@ -885,6 +630,13 @@ st.markdown(
 
 
 # --- INITIALISATION SESSION STATE ---
+if 'audio_classifier' not in st.session_state:
+    st.session_state.audio_classifier = None
+if 'spotify_service' not in st.session_state:
+    st.session_state.spotify_service = None
+if 'playlist_pathfinder' not in st.session_state:
+    st.session_state.playlist_pathfinder = None
+# Compatibilité avec ancien code
 if 'model' not in st.session_state:
     st.session_state.model = None
 if 'analyzed_tracks' not in st.session_state:
@@ -920,9 +672,15 @@ with st.sidebar:
     model_path = "templates/assets/music/best_model_original_loss.pth"
     
     with st.spinner(_("Chargement...")):
-        st.session_state.model = load_model(model_path)
+        # Initialiser les services
+        st.session_state.audio_classifier = init_audio_classifier(model_path)
+        st.session_state.spotify_service = init_spotify_service()
+        st.session_state.playlist_pathfinder = init_playlist_pathfinder()
+        
+        # Compatibilité avec ancien code
+        st.session_state.model = st.session_state.audio_classifier
     
-    spotify_client = get_spotify_client()
+    spotify_client = st.session_state.spotify_service.get_client() if st.session_state.spotify_service else None
     
     if spotify_client:
         try:
@@ -1084,15 +842,19 @@ with tab3:
                 
                 if len(features_list) >= 2:
                     # Calcul de la réduction de dimensionnalité
+                    pathfinder = st.session_state.playlist_pathfinder
                     if reduction_method == 'tsne':
+                        perplexity_val = st.session_state.get('tsne_perplexity', 30)
                         result, model, scaler = perform_dimensionality_reduction(
                             features_list, 
+                            pathfinder,
                             method='tsne',
-                            perplexity=30
+                            perplexity=perplexity_val
                         )
                     else:
                         result, model, scaler = perform_dimensionality_reduction(
                             features_list, 
+                            pathfinder,
                             method='pca'
                         )
                     
@@ -1244,10 +1006,12 @@ with tab4:
             if st.button(_("🎯 Générer la playlist"), type="primary", key="generate_playlist_btn"):
                 if track1_idx != track2_idx:
                     with st.spinner(_("Génération de la playlist...")):
+                        pathfinder = st.session_state.playlist_pathfinder
                         playlist, line_points, p1, p2 = generate_playlist_line(
                             st.session_state.pca_df, 
                             track1_idx, 
                             track2_idx, 
+                            pathfinder,
                             num_tracks
                         )
                         
@@ -1258,7 +1022,8 @@ with tab4:
                             st.session_state.p2 = p2
                             st.session_state.track1_idx = track1_idx
                             st.session_state.track2_idx = track2_idx
-                            st.session_state.playlist_analysis = analyze_playlist_quality(playlist)
+                            pathfinder = st.session_state.playlist_pathfinder
+                            st.session_state.playlist_analysis = analyze_playlist_quality(playlist, pathfinder)
                             st.success(_(f"✅ Playlist de {len(playlist)} tracks générée!"))
                         else:
                             st.error(_("❌ Échec de la génération de la playlist"))
@@ -1344,7 +1109,8 @@ with tab4:
                             st.session_state.line_points = None
                             st.session_state.p1 = None
                             st.session_state.p2 = None
-                            st.session_state.playlist_analysis = analyze_playlist_quality(playlist)
+                            pathfinder = st.session_state.playlist_pathfinder
+                            st.session_state.playlist_analysis = analyze_playlist_quality(playlist, pathfinder)
                             st.success(_(f"✅ Playlist de {len(playlist)} tracks générée!"))
                         else:
                             st.error(_("❌ Aucune track trouvée pour ces genres"))
@@ -1460,9 +1226,9 @@ with tab4:
                     )
                 
                 if st.button(_("🎵 Créer la playlist sur Spotify"), type="primary", key="export_spotify_btn"):
-                    spotify_client = get_spotify_client()
+                    spotify_service = st.session_state.spotify_service
                     
-                    if spotify_client:
+                    if spotify_service:
                         # Filtrer uniquement les tracks Spotify
                         spotify_only_tracks = [
                             track for track in st.session_state.generated_playlist 
@@ -1471,7 +1237,7 @@ with tab4:
                         
                         if spotify_only_tracks:
                             result = export_playlist_to_spotify(
-                                spotify_client, 
+                                spotify_service, 
                                 spotify_only_tracks, 
                                 playlist_name, 
                                 playlist_desc
