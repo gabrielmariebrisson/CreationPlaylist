@@ -16,6 +16,7 @@ from src.config import (
     TSNE_MAX_ITER,
     MIN_FEATURES_FOR_REDUCTION,
     DEFAULT_PLAYLIST_SIZE,
+    FEATURE_VIEW_SIZE,
 )
 
 
@@ -28,12 +29,51 @@ class PlaylistPathfinder:
         self.tsne_model: Optional[TSNE] = None
         self.scaler: Optional[StandardScaler] = None
     
+    def _cosine_similarity(
+        self, 
+        vec1: np.ndarray, 
+        vec2: np.ndarray
+    ) -> float:
+        """
+        Calcule la similarité cosinus entre deux vecteurs.
+        
+        Args:
+            vec1: Premier vecteur.
+            vec2: Deuxième vecteur.
+        
+        Returns:
+            Similarité cosinus (entre -1 et 1, mais généralement entre 0 et 1 pour des features normalisées).
+        """
+        # Normaliser les vecteurs pour éviter les problèmes numériques
+        vec1_norm = vec1 / (np.linalg.norm(vec1) + 1e-9)
+        vec2_norm = vec2 / (np.linalg.norm(vec2) + 1e-9)
+        return np.dot(vec1_norm, vec2_norm)
+    
+    def _cosine_distance(
+        self, 
+        vec1: np.ndarray, 
+        vec2: np.ndarray
+    ) -> float:
+        """
+        Calcule la distance cosinus (1 - cosine similarity) entre deux vecteurs.
+        
+        Args:
+            vec1: Premier vecteur.
+            vec2: Deuxième vecteur.
+        
+        Returns:
+            Distance cosinus (entre 0 et 2, où 0 = identique, 2 = opposé).
+        """
+        similarity = self._cosine_similarity(vec1, vec2)
+        return 1.0 - similarity
+    
     def perform_pca(
         self, 
         features_list: List[np.ndarray]
     ) -> Tuple[Optional[np.ndarray], Optional[PCA], Optional[StandardScaler]]:
         """
         Effectue une PCA sur les features extraites.
+        Utilisé uniquement pour la visualisation, pas pour le calcul de similarité.
         
         Args:
             features_list: Liste des features extraites (arrays numpy).
@@ -71,6 +111,7 @@ class PlaylistPathfinder:
     ) -> Tuple[Optional[np.ndarray], Optional[TSNE], Optional[StandardScaler]]:
         """
         Effectue une t-SNE sur les features extraites.
+        Utilisé uniquement pour la visualisation, pas pour le calcul de similarité.
         
         Args:
             features_list: Liste des features extraites (arrays numpy).
@@ -118,6 +159,7 @@ class PlaylistPathfinder:
     ) -> Tuple[Optional[np.ndarray], Optional[Any], Optional[StandardScaler]]:
         """
         Effectue une réduction de dimensionnalité (PCA ou t-SNE).
+        Utilisé uniquement pour la visualisation, pas pour le calcul de similarité.
         
         Args:
             features_list: Liste des features extraites.
@@ -139,7 +181,200 @@ class PlaylistPathfinder:
     
     def generate_playlist_line(
         self, 
+        tracks_df: pd.DataFrame,
+        raw_features: np.ndarray,
+        track1_idx: int, 
+        track2_idx: int, 
+        num_tracks: int = DEFAULT_PLAYLIST_SIZE,
+        use_pca_for_visualization: bool = True
+    ) -> Tuple[
+        Optional[List[Dict[str, Any]]], 
+        Optional[np.ndarray], 
+        Optional[np.ndarray], 
+        Optional[np.ndarray]
+    ]:
+        """
+        Génère une playlist progressive (linéaire) entre deux morceaux.
+        
+        Utilise les embeddings bruts (1536 dimensions) pour l'interpolation et la recherche
+        de voisins avec cosine similarity. La PCA est utilisée uniquement pour la visualisation.
+        
+        Args:
+            tracks_df: DataFrame contenant les métadonnées des tracks (name, artists, genre, etc.).
+            raw_features: Array numpy de shape (n_tracks, feature_dim) contenant les features brutes.
+            track1_idx: Index de la track de départ.
+            track2_idx: Index de la track d'arrivée.
+            num_tracks: Nombre de tracks dans la playlist. Par défaut: DEFAULT_PLAYLIST_SIZE.
+            use_pca_for_visualization: Si True, calcule les coordonnées PCA pour la visualisation.
+        
+        Returns:
+            Tuple (playlist_tracks, line_points_2d, p1_2d, p2_2d) où:
+                - playlist_tracks: Liste des tracks de la playlist avec métadonnées.
+                - line_points_2d: Points interpolés en 2D (pour visualisation).
+                - p1_2d: Point de départ en 2D (pour visualisation).
+                - p2_2d: Point d'arrivée en 2D (pour visualisation).
+        
+        Raises:
+            ValueError: Si les indices sont invalides ou identiques.
+            KeyError: Si les colonnes nécessaires sont manquantes dans le DataFrame.
+            RuntimeError: Si la génération échoue.
+        """
+        try:
+            # Validation des entrées
+            if track1_idx >= len(tracks_df) or track2_idx >= len(tracks_df):
+                raise ValueError(
+                    f"Indices invalides : {track1_idx}, {track2_idx}. "
+                    f"Le DataFrame contient {len(tracks_df)} éléments."
+                )
+            
+            if track1_idx == track2_idx:
+                raise ValueError("Les deux tracks doivent être différentes")
+            
+            if len(raw_features) != len(tracks_df):
+                raise ValueError(
+                    f"Le nombre de features ({len(raw_features)}) ne correspond pas "
+                    f"au nombre de tracks ({len(tracks_df)})"
+                )
+            
+            # Vérifier la présence des colonnes nécessaires
+            required_columns = ['track_id', 'genre', 'name', 'artists', 'confidence']
+            missing_columns = [col for col in required_columns if col not in tracks_df.columns]
+            if missing_columns:
+                raise KeyError(f"Colonnes manquantes dans le DataFrame: {missing_columns}")
+            
+            # Normaliser les features brutes pour une meilleure interpolation
+            features_normalized = raw_features / (
+                np.linalg.norm(raw_features, axis=1, keepdims=True) + 1e-9
+            )
+            
+            # Extraire les features des deux tracks de référence
+            feature1 = features_normalized[track1_idx]
+            feature2 = features_normalized[track2_idx]
+            
+            # Interpolation linéaire dans l'espace des features brutes
+            t_values = np.linspace(0, 1, num_tracks)
+            interpolated_features = np.array([
+                (1 - t) * feature1 + t * feature2 for t in t_values
+            ])
+            
+            # Normaliser les features interpolées
+            interpolated_features = interpolated_features / (
+                np.linalg.norm(interpolated_features, axis=1, keepdims=True) + 1e-9
+            )
+            
+            # Calculer les coordonnées PCA pour la visualisation (si demandé)
+            p1_2d: Optional[np.ndarray] = None
+            p2_2d: Optional[np.ndarray] = None
+            line_points_2d: Optional[np.ndarray] = None
+            
+            if use_pca_for_visualization and self.pca_model is not None and self.scaler is not None:
+                # Transformer les features brutes en coordonnées PCA pour la visualisation
+                features_scaled = self.scaler.transform(raw_features)
+                features_pca = self.pca_model.transform(features_scaled)
+                
+                p1_2d = features_pca[track1_idx]
+                p2_2d = features_pca[track2_idx]
+                
+                # Interpoler aussi en 2D pour la visualisation
+                line_points_2d = np.array([
+                    (1 - t) * p1_2d + t * p2_2d for t in t_values
+                ])
+            
+            # Recherche des voisins les plus proches avec cosine similarity
+            playlist_tracks: List[Dict[str, Any]] = []
+            used_tracks: set[str] = set()
+            
+            for i, target_feature in enumerate(interpolated_features):
+                similarities: List[Tuple[float, Any, ...]] = []
+                
+                for idx, row in tracks_df.iterrows():
+                    if row['track_id'] not in used_tracks:
+                        track_feature = features_normalized[idx]
+                        
+                        # Utiliser cosine similarity (plus grande = plus similaire)
+                        similarity = self._cosine_similarity(target_feature, track_feature)
+                        # Convertir en distance pour trier (plus petite = plus similaire)
+                        distance = 1.0 - similarity
+                        
+                        # Récupérer les coordonnées PCA pour la visualisation
+                        track_pca_point = None
+                        if use_pca_for_visualization and self.pca_model is not None:
+                            if hasattr(self, '_features_pca_cache'):
+                                track_pca_point = self._features_pca_cache[idx]
+                            else:
+                                # Calculer à la volée si pas en cache
+                                feature_scaled = self.scaler.transform([raw_features[idx]])
+                                track_pca_point = self.pca_model.transform(feature_scaled)[0]
+                        
+                        similarities.append((
+                            distance,  # Distance cosinus (pour trier)
+                            similarity,  # Similarité cosinus (pour métrique)
+                            row['track_id'], 
+                            row['genre'], 
+                            track_feature,  # Feature brute
+                            track_pca_point,  # Coordonnées PCA pour visualisation
+                            row['name'], 
+                            row['artists'], 
+                            row['confidence'], 
+                            row.get('uri'), 
+                            row.get('spotify_id'), 
+                            row.get('deezer_id'), 
+                            row.get('preview_url')
+                        ))
+                
+                if similarities:
+                    # Trier par distance (plus petite = plus similaire)
+                    similarities.sort(key=lambda x: x[0])
+                    (
+                        cosine_distance,
+                        cosine_similarity_val,
+                        closest_track, 
+                        closest_genre, 
+                        closest_feature,
+                        closest_pca_point,
+                        closest_name, 
+                        closest_artists, 
+                        closest_confidence, 
+                        closest_uri, 
+                        closest_spotify_id, 
+                        closest_deezer_id, 
+                        closest_preview_url
+                    ) = similarities[0]
+                    
+                    # Extraire les coordonnées PCA pour la visualisation
+                    pc1 = closest_pca_point[0] if closest_pca_point is not None else 0.0
+                    pc2 = closest_pca_point[1] if closest_pca_point is not None else 0.0
+                    
+                    playlist_tracks.append({
+                        'position': i + 1,
+                        'track_id': closest_track,
+                        'name': closest_name,
+                        'artists': closest_artists,
+                        'genre': closest_genre,
+                        'confidence': closest_confidence,
+                        'uri': closest_uri,
+                        'spotify_id': closest_spotify_id,
+                        'deezer_id': closest_deezer_id,
+                        'preview_url': closest_preview_url,
+                        'cosine_similarity': cosine_similarity_val,  # Nouvelle métrique
+                        'cosine_distance': cosine_distance,  # Pour compatibilité
+                        'distance_to_line': cosine_distance,  # Alias pour compatibilité
+                        'target_feature': target_feature,  # Feature interpolée cible
+                        'actual_feature': closest_feature,  # Feature réelle du track
+                        'PC1': pc1,  # Pour visualisation
+                        'PC2': pc2,  # Pour visualisation
+                    })
+                    used_tracks.add(closest_track)
+            
+            return playlist_tracks, line_points_2d, p1_2d, p2_2d
+            
+        except (ValueError, KeyError, IndexError) as e:
+            raise RuntimeError(f"Erreur génération playlist: {e}") from e
+    
+    def generate_playlist_line_from_pca_df(
+        self, 
         pca_df: pd.DataFrame, 
+        raw_features: np.ndarray,
         track1_idx: int, 
         track2_idx: int, 
         num_tracks: int = DEFAULT_PLAYLIST_SIZE
@@ -150,106 +385,29 @@ class PlaylistPathfinder:
         Optional[np.ndarray]
     ]:
         """
-        Génère une playlist progressive (linéaire) entre deux morceaux.
+        Wrapper pour compatibilité avec l'ancienne interface.
+        
+        Génère une playlist en utilisant les features brutes pour le calcul,
+        mais accepte un DataFrame avec colonnes PCA pour la compatibilité.
         
         Args:
-            pca_df: DataFrame contenant les tracks avec leurs coordonnées PC1 et PC2.
+            pca_df: DataFrame contenant les métadonnées (peut contenir PC1/PC2 pour compatibilité).
+            raw_features: Array numpy de shape (n_tracks, feature_dim) contenant les features brutes.
             track1_idx: Index de la track de départ.
             track2_idx: Index de la track d'arrivée.
-            num_tracks: Nombre de tracks dans la playlist. Par défaut: DEFAULT_PLAYLIST_SIZE.
+            num_tracks: Nombre de tracks dans la playlist.
         
         Returns:
-            Tuple (playlist_tracks, line_points, p1, p2) ou (None, None, None, None) si erreur.
-        
-        Raises:
-            ValueError: Si les indices sont invalides ou identiques.
-            KeyError: Si les colonnes PC1/PC2 sont manquantes dans le DataFrame.
-            RuntimeError: Si la génération échoue.
+            Tuple (playlist_tracks, line_points_2d, p1_2d, p2_2d).
         """
-        try:
-            if track1_idx >= len(pca_df) or track2_idx >= len(pca_df):
-                raise ValueError(
-                    f"Indices invalides : {track1_idx}, {track2_idx}. "
-                    f"Le DataFrame contient {len(pca_df)} éléments."
-                )
-            
-            if track1_idx == track2_idx:
-                raise ValueError("Les deux tracks doivent être différentes")
-            
-            # Vérifier la présence des colonnes nécessaires
-            required_columns = ['PC1', 'PC2', 'track_id', 'genre', 'name', 'artists', 'confidence']
-            missing_columns = [col for col in required_columns if col not in pca_df.columns]
-            if missing_columns:
-                raise KeyError(f"Colonnes manquantes dans le DataFrame: {missing_columns}")
-            
-            # Points PCA
-            p1 = np.array([pca_df.iloc[track1_idx]['PC1'], pca_df.iloc[track1_idx]['PC2']])
-            p2 = np.array([pca_df.iloc[track2_idx]['PC1'], pca_df.iloc[track2_idx]['PC2']])
-            t_values = np.linspace(0, 1, num_tracks)
-            line_points = np.array([p1 + t * (p2 - p1) for t in t_values])
-            
-            playlist_tracks: List[Dict[str, Any]] = []
-            used_tracks: set[str] = set()
-            
-            for i, target_point in enumerate(line_points):
-                distances: List[Tuple[float, Any, ...]] = []
-                for idx, row in pca_df.iterrows():
-                    if row['track_id'] not in used_tracks:
-                        track_point = np.array([row['PC1'], row['PC2']])
-                        distance = np.linalg.norm(track_point - target_point)
-                        distances.append((
-                            distance, 
-                            row['track_id'], 
-                            row['genre'], 
-                            track_point, 
-                            row['name'], 
-                            row['artists'], 
-                            row['confidence'], 
-                            row.get('uri'), 
-                            row.get('spotify_id'), 
-                            row.get('deezer_id'), 
-                            row.get('preview_url')
-                        ))
-                
-                if distances:
-                    distances.sort(key=lambda x: x[0])
-                    (
-                        closest_distance, 
-                        closest_track, 
-                        closest_genre, 
-                        closest_point, 
-                        closest_name, 
-                        closest_artists, 
-                        closest_confidence, 
-                        closest_uri, 
-                        closest_spotify_id, 
-                        closest_deezer_id, 
-                        closest_preview_url
-                    ) = distances[0]
-                    
-                    playlist_tracks.append({
-                        'position': i + 1,
-                        'track_id': idx,
-                        'name': closest_name,
-                        'artists': closest_artists,
-                        'genre': closest_genre,
-                        'confidence': closest_confidence,
-                        'uri': closest_uri,
-                        'spotify_id': closest_spotify_id,
-                        'deezer_id': closest_deezer_id,
-                        'preview_url': closest_preview_url,
-                        'distance_to_line': closest_distance,
-                        'target_point': target_point,
-                        'actual_point': closest_point,
-                        'PC1': closest_point[0],
-                        'PC2': closest_point[1]
-                    })
-                    used_tracks.add(closest_track)
-            
-            return playlist_tracks, line_points, p1, p2
-            
-        except (ValueError, KeyError, IndexError) as e:
-            raise RuntimeError(f"Erreur génération playlist: {e}") from e
+        return self.generate_playlist_line(
+            tracks_df=pca_df,
+            raw_features=raw_features,
+            track1_idx=track1_idx,
+            track2_idx=track2_idx,
+            num_tracks=num_tracks,
+            use_pca_for_visualization=True
+        )
     
     def analyze_playlist_quality(
         self, 
@@ -277,15 +435,30 @@ class PlaylistPathfinder:
             unique_genres = len(set(genres_in_playlist))
             genre_distribution = pd.Series(genres_in_playlist).value_counts()
             
-            distances = [track.get('distance_to_line', 0) for track in playlist]
+            # Utiliser cosine_similarity si disponible, sinon distance_to_line
+            similarities = [
+                track.get('cosine_similarity', 1.0 - track.get('distance_to_line', 0.0))
+                for track in playlist
+            ]
+            distances = [
+                track.get('cosine_distance', track.get('distance_to_line', 0.0))
+                for track in playlist
+            ]
+            
+            avg_similarity = np.mean(similarities) if similarities else 0.0
             avg_distance = np.mean(distances) if distances else 0.0
             std_distance = np.std(distances) if distances else 0.0
             max_distance = np.max(distances) if distances else 0.0
             
-            # Calcul de la fluidité (smoothness) - seulement si PC1/PC2 disponibles
+            # Calcul de la fluidité (smoothness) dans l'espace des features
             smoothness_distances: List[float] = []
             for i in range(len(playlist) - 1):
-                if 'PC1' in playlist[i] and 'PC2' in playlist[i]:
+                if 'actual_feature' in playlist[i] and 'actual_feature' in playlist[i+1]:
+                    feat1 = playlist[i]['actual_feature']
+                    feat2 = playlist[i+1]['actual_feature']
+                    smoothness_distances.append(self._cosine_distance(feat1, feat2))
+                elif 'PC1' in playlist[i] and 'PC2' in playlist[i]:
+                    # Fallback sur PCA si features brutes non disponibles
                     p1 = np.array([playlist[i]['PC1'], playlist[i]['PC2']])
                     p2 = np.array([playlist[i+1]['PC1'], playlist[i+1]['PC2']])
                     smoothness_distances.append(np.linalg.norm(p2 - p1))
@@ -304,6 +477,7 @@ class PlaylistPathfinder:
                     if playlist 
                     else 0.0
                 ),
+                'avg_cosine_similarity': avg_similarity,
                 'avg_distance_to_line': avg_distance,
                 'std_distance_to_line': std_distance,
                 'max_distance_to_line': max_distance,

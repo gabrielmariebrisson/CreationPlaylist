@@ -25,6 +25,7 @@ load_dotenv()
 from src.services.spotify_service import SpotifyService
 from src.models.audio_classifier import AudioClassifier
 from src.logic.playlist_generator import PlaylistPathfinder
+from src.config import FEATURE_VIEW_SIZE
 
 from deep_translator import GoogleTranslator
 
@@ -221,10 +222,107 @@ def perform_dimensionality_reduction(features_list, pathfinder, method='pca', **
 
 def generate_playlist_line(pca_df, track1_idx, track2_idx, pathfinder, num_tracks=10):
     """
-    Wrapper pour compatibilité - Génère une playlist progressive (linéaire) entre deux morceaux
+    Wrapper pour compatibilité - Génère une playlist progressive (linéaire) entre deux morceaux.
+    Utilise maintenant les features brutes avec cosine similarity au lieu de PCA.
     """
     try:
-        return pathfinder.generate_playlist_line(pca_df, track1_idx, track2_idx, num_tracks)
+        # Extraire les features brutes depuis analyzed_tracks
+        valid_tracks = [t for t in st.session_state.analyzed_tracks if t.get('features') is not None]
+        
+        if len(valid_tracks) < 2:
+            st.error("Pas assez de tracks avec features pour générer une playlist")
+            return None, None, None, None
+        
+        # Créer un mapping multi-clés pour trouver les features
+        # On utilise plusieurs clés car les IDs peuvent varier
+        features_dict = {}
+        for t in valid_tracks:
+            feature = t.get('features')
+            if feature is not None:
+                # Créer des entrées pour différentes clés possibles
+                keys = [
+                    str(t.get('deezer_id', '')),
+                    str(t.get('spotify_id', '')),
+                    str(t.get('name', '')).lower(),
+                    str(t.get('track_id', ''))
+                ]
+                for key in keys:
+                    if key:
+                        features_dict[key] = feature
+        
+        # Extraire les features brutes dans le même ordre que pca_df
+        raw_features_list = []
+        missing_features = []
+        
+        for idx, row in pca_df.iterrows():
+            # Chercher la feature correspondante avec plusieurs stratégies
+            feature = None
+            
+            # Stratégie 1: Par deezer_id
+            deezer_id = row.get('deezer_id')
+            if deezer_id and str(deezer_id) in features_dict:
+                feature = features_dict[str(deezer_id)]
+            
+            # Stratégie 2: Par spotify_id
+            if feature is None:
+                spotify_id = row.get('spotify_id')
+                if spotify_id and str(spotify_id) in features_dict:
+                    feature = features_dict[str(spotify_id)]
+            
+            # Stratégie 3: Par nom (normalisé)
+            if feature is None:
+                name = str(row.get('name', '')).lower()
+                if name in features_dict:
+                    feature = features_dict[name]
+            
+            # Stratégie 4: Recherche directe dans analyzed_tracks
+            if feature is None:
+                name = row.get('name', '')
+                for t in valid_tracks:
+                    if (t.get('name') == name or 
+                        t.get('deezer_id') == deezer_id or 
+                        t.get('spotify_id') == spotify_id):
+                        feature = t.get('features')
+                        if feature is not None:
+                            break
+            
+            if feature is None:
+                missing_features.append(row.get('name', 'Unknown'))
+                # Utiliser un vecteur zéro comme fallback (ne devrait pas arriver normalement)
+                feature = np.zeros(FEATURE_VIEW_SIZE)
+            
+            # S'assurer que la feature est un array numpy
+            if not isinstance(feature, np.ndarray):
+                feature = np.array(feature)
+            
+            raw_features_list.append(feature)
+        
+        if missing_features:
+            st.warning(f"Features non trouvées pour {len(missing_features)} track(s): {missing_features[:3]}")
+        
+        # Convertir en array numpy
+        raw_features = np.array(raw_features_list)
+        
+        # Vérifier la dimension
+        if len(raw_features) == 0:
+            st.error("Aucune feature trouvée")
+            return None, None, None, None
+        
+        # S'assurer que le pathfinder a le modèle PCA chargé pour la visualisation
+        if pathfinder.pca_model is None:
+            # Recalculer la PCA pour la visualisation
+            features_list = [t['features'] for t in valid_tracks if t.get('features') is not None]
+            if len(features_list) >= 2:
+                pathfinder.perform_pca(features_list)
+        
+        # Utiliser la nouvelle méthode avec features brutes
+        return pathfinder.generate_playlist_line_from_pca_df(
+            pca_df=pca_df,
+            raw_features=raw_features,
+            track1_idx=track1_idx,
+            track2_idx=track2_idx,
+            num_tracks=num_tracks
+        )
     except Exception as e:
         st.error(f"Erreur génération playlist: {e}")
         import traceback
