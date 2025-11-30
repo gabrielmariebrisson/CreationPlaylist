@@ -16,8 +16,11 @@ from src.config import (
     SPOTIFY_SEARCH_LIMIT_MATCH,
     SPOTIFY_PLAYLIST_BATCH_SIZE,
 )
+from src.utils.logger import get_logger
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 
 class SpotifyService:
@@ -51,7 +54,20 @@ class SpotifyService:
         redirect_uri = os.getenv('REDIRECT_URI_SPOTIFY', SPOTIFY_DEFAULT_REDIRECT_URI)
         
         if not client_id or not client_secret:
+            logger.warning(
+                "Spotify credentials manquants",
+                extra={"extra": {
+                    "has_client_id": bool(client_id),
+                    "has_client_secret": bool(client_secret),
+                    "redirect_uri": redirect_uri
+                }}
+            )
             return None
+        
+        logger.debug(
+            "Création du gestionnaire d'authentification Spotify",
+            extra={"extra": {"redirect_uri": redirect_uri, "scope": SPOTIFY_SCOPE}}
+        )
         
         return SpotifyOAuth(
             client_id=client_id,
@@ -74,11 +90,13 @@ class SpotifyService:
             SpotifyException: Si l'authentification échoue.
         """
         if not self.auth_manager:
+            logger.warning("Auth manager non disponible pour Spotify")
             return None
         
         refresh_token = os.getenv('REFRESH_TOKEN_SPOTIFY')
         
         if not refresh_token:
+            logger.warning("REFRESH_TOKEN_SPOTIFY manquant dans les variables d'environnement")
             return None
         
         # Utiliser le cache de session si disponible
@@ -88,12 +106,14 @@ class SpotifyService:
                     'refresh_token': refresh_token,
                     'expires_at': 0
                 }
+                logger.debug("Initialisation du cache de token dans session_state")
             
             token_info = self.session_state.spotify_service_token
             
             # Vérifier expiration
             if self.auth_manager.is_token_expired(token_info):
                 try:
+                    logger.debug("Token expiré, rafraîchissement en cours")
                     new_token_info = self.auth_manager.refresh_access_token(refresh_token)
                     
                     if 'refresh_token' not in new_token_info:
@@ -101,19 +121,43 @@ class SpotifyService:
                     
                     self.session_state.spotify_service_token = new_token_info
                     token_info = new_token_info
+                    logger.info("Token Spotify rafraîchi avec succès")
                 except SpotifyException as e:
-                    # Éviter les dépendances circulaires avec streamlit
+                    logger.exception(
+                        "Erreur lors du rafraîchissement du token Spotify",
+                        extra={"extra": {
+                            "error_type": "SpotifyException",
+                            "refresh_token_length": len(refresh_token) if refresh_token else 0
+                        }}
+                    )
                     return None
                 except Exception as e:
+                    logger.exception(
+                        "Erreur inattendue lors du rafraîchissement du token",
+                        extra={"extra": {"error_type": type(e).__name__}}
+                    )
                     return None
             
+            logger.debug("Client Spotify créé avec succès (session_state)")
             return spotipy.Spotify(auth=token_info['access_token'])
         
         # Fallback sans session_state
         try:
+            logger.debug("Création du client Spotify sans session_state")
             token_info = self.auth_manager.refresh_access_token(refresh_token)
+            logger.info("Client Spotify créé avec succès (fallback)")
             return spotipy.Spotify(auth=token_info['access_token'])
-        except (SpotifyException, KeyError) as e:
+        except SpotifyException as e:
+            logger.exception(
+                "Erreur Spotify lors de la création du client (fallback)",
+                extra={"extra": {"error_type": "SpotifyException"}}
+            )
+            return None
+        except KeyError as e:
+            logger.exception(
+                "Clé manquante dans la réponse de token (fallback)",
+                extra={"extra": {"error_type": "KeyError", "missing_key": str(e)}}
+            )
             return None
     
     def search_track(
@@ -134,14 +178,33 @@ class SpotifyService:
         Raises:
             SpotifyException: Si la recherche échoue.
         """
+        logger.info(
+            "Recherche de track sur Spotify",
+            extra={"extra": {"query": query, "limit": limit}}
+        )
+        
         client = self.get_client()
         if not client:
+            logger.warning("Client Spotify non disponible pour la recherche")
             return None
         
         try:
             results = client.search(q=query, type='track', limit=limit)
+            num_results = len(results.get('tracks', {}).get('items', []))
+            logger.info(
+                "Recherche Spotify réussie",
+                extra={"extra": {
+                    "query": query,
+                    "results_count": num_results,
+                    "limit": limit
+                }}
+            )
             return results
-        except SpotifyException:
+        except SpotifyException as e:
+            logger.exception(
+                "Erreur lors de la recherche Spotify",
+                extra={"extra": {"query": query, "limit": limit, "error_type": "SpotifyException"}}
+            )
             return None
     
     def match_deezer_to_spotify(
@@ -162,8 +225,14 @@ class SpotifyService:
         Raises:
             SpotifyException: Si la recherche échoue.
         """
+        logger.debug(
+            "Matching Deezer vers Spotify",
+            extra={"extra": {"track_name": track_name, "artist_name": artist_name}}
+        )
+        
         client = self.get_client()
         if not client:
+            logger.warning("Client Spotify non disponible pour le matching")
             return None
         
         try:
@@ -172,14 +241,46 @@ class SpotifyService:
             
             if results['tracks']['items']:
                 best_match = results['tracks']['items'][0]
-                return {
+                match_info = {
                     'spotify_id': best_match['id'],
                     'uri': best_match['uri'],
                     'name': best_match['name'],
                     'artists': ', '.join([a['name'] for a in best_match['artists']])
                 }
+                logger.info(
+                    "Match Deezer->Spotify trouvé",
+                    extra={"extra": {
+                        "track_name": track_name,
+                        "spotify_id": match_info['spotify_id'],
+                        "spotify_name": match_info['name']
+                    }}
+                )
+                return match_info
+            
+            logger.debug(
+                "Aucun match trouvé pour Deezer track",
+                extra={"extra": {"track_name": track_name, "artist_name": artist_name}}
+            )
             return None
-        except (SpotifyException, KeyError, IndexError):
+        except SpotifyException as e:
+            logger.exception(
+                "Erreur Spotify lors du matching",
+                extra={"extra": {
+                    "track_name": track_name,
+                    "artist_name": artist_name,
+                    "error_type": "SpotifyException"
+                }}
+            )
+            return None
+        except (KeyError, IndexError) as e:
+            logger.exception(
+                "Erreur de structure dans la réponse Spotify",
+                extra={"extra": {
+                    "track_name": track_name,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e)
+                }}
+            )
             return None
     
     def export_playlist(
@@ -295,7 +396,27 @@ class SpotifyService:
                 if callback_warning:
                     callback_warning("⚠️ Aucun URI Spotify valide trouvé")
                 return None
-        except (SpotifyException, KeyError) as e:
+        except SpotifyException as e:
+            logger.exception(
+                "Erreur Spotify lors de la création de playlist",
+                extra={"extra": {
+                    "playlist_name": playlist_name,
+                    "tracks_count": len(playlist_tracks),
+                    "error_type": "SpotifyException"
+                }}
+            )
+            if callback_error:
+                callback_error(f"❌ Erreur lors de la création de la playlist: {e}")
+            return None
+        except KeyError as e:
+            logger.exception(
+                "Clé manquante lors de la création de playlist",
+                extra={"extra": {
+                    "playlist_name": playlist_name,
+                    "missing_key": str(e),
+                    "error_type": "KeyError"
+                }}
+            )
             if callback_error:
                 callback_error(f"❌ Erreur lors de la création de la playlist: {e}")
             return None
@@ -310,11 +431,23 @@ class SpotifyService:
         Raises:
             SpotifyException: Si la récupération échoue.
         """
+        logger.debug("Récupération des informations utilisateur Spotify")
+        
         client = self.get_client()
         if not client:
+            logger.warning("Client Spotify non disponible pour get_current_user")
             return None
         
         try:
-            return client.current_user()
-        except SpotifyException:
+            user_info = client.current_user()
+            logger.info(
+                "Informations utilisateur récupérées",
+                extra={"extra": {"user_id": user_info.get('id', 'unknown')}}
+            )
+            return user_info
+        except SpotifyException as e:
+            logger.exception(
+                "Erreur lors de la récupération des informations utilisateur",
+                extra={"extra": {"error_type": "SpotifyException"}}
+            )
             return None

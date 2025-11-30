@@ -21,6 +21,16 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 load_dotenv()
 
+# Configuration du logging structuré
+from src.utils.logger import StructuredLogger
+import logging
+
+# Configurer le logging au démarrage de l'application
+StructuredLogger.configure(
+    level=logging.INFO,
+    use_json=True  # Format JSON pour la production
+)
+
 # Imports des nouvelles classes modulaires
 from src.services.spotify_service import SpotifyService
 from src.models.audio_classifier import AudioClassifier
@@ -28,6 +38,9 @@ from src.logic.playlist_generator import PlaylistPathfinder
 from src.config import FEATURE_VIEW_SIZE
 
 from deep_translator import GoogleTranslator
+
+# Logger pour le fichier principal
+logger = logging.getLogger(__name__)
 
 # --- Configuration de la traduction automatique ---
 LANGUAGES = {

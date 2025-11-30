@@ -22,6 +22,9 @@ from src.config import (
     FALLBACK_CONFIDENCE_MAX,
     EPSILON,
 )
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Ajouter le chemin du module architecture au path
 _current_dir = Path(__file__).parent
@@ -70,15 +73,62 @@ class AudioClassifier:
             RuntimeError: Si le chargement du modèle échoue.
         """
         if not os.path.exists(self.model_path):
+            logger.error(
+                "Fichier de modèle non trouvé",
+                extra={"extra": {"model_path": self.model_path}}
+            )
             raise FileNotFoundError(f"Modèle non trouvé: {self.model_path}")
         
         try:
+            logger.info(
+                "Chargement du modèle CNN",
+                extra={"extra": {
+                    "model_path": self.model_path,
+                    "device": str(self.device)
+                }}
+            )
+            
             self.model = SimpleCNN()
             state_dict = torch.load(self.model_path, map_location=self.device)
             self.model.load_state_dict(state_dict)
             self.model.eval()
             self.model.to(self.device)
-        except (OSError, KeyError, RuntimeError) as e:
+            
+            logger.info(
+                "Modèle CNN chargé avec succès",
+                extra={"extra": {
+                    "model_path": self.model_path,
+                    "device": str(self.device),
+                    "num_genres": NUM_GENRES
+                }}
+            )
+        except OSError as e:
+            logger.exception(
+                "Erreur OS lors du chargement du modèle",
+                extra={"extra": {
+                    "model_path": self.model_path,
+                    "error_type": "OSError"
+                }}
+            )
+            raise RuntimeError(f"Erreur lors du chargement du modèle: {e}") from e
+        except KeyError as e:
+            logger.exception(
+                "Clé manquante dans le state_dict",
+                extra={"extra": {
+                    "model_path": self.model_path,
+                    "error_type": "KeyError",
+                    "missing_key": str(e)
+                }}
+            )
+            raise RuntimeError(f"Erreur lors du chargement du modèle: {e}") from e
+        except RuntimeError as e:
+            logger.exception(
+                "Erreur runtime lors du chargement du modèle",
+                extra={"extra": {
+                    "model_path": self.model_path,
+                    "error_type": "RuntimeError"
+                }}
+            )
             raise RuntimeError(f"Erreur lors du chargement du modèle: {e}") from e
     
     def convert_song_to_matrix(
@@ -101,9 +151,22 @@ class AudioClassifier:
             RuntimeError: Si la conversion audio échoue.
         """
         if not os.path.exists(audio_path):
+            logger.error(
+                "Fichier audio non trouvé",
+                extra={"extra": {"audio_path": audio_path}}
+            )
             raise FileNotFoundError(f"Fichier audio non trouvé: {audio_path}")
         
         try:
+            logger.debug(
+                "Conversion audio en spectrogramme",
+                extra={"extra": {
+                    "audio_path": audio_path,
+                    "target_size": size,
+                    "duration_seconds": AUDIO_DURATION_SECONDS
+                }}
+            )
+            
             y, sr = librosa.load(audio_path, duration=AUDIO_DURATION_SECONDS)
             n_fft = int((sr / SPECTROGRAM_N_FFT_DIVISOR) / 2 + 3)
             D = np.abs(librosa.stft(y, hop_length=int(n_fft)))
@@ -111,8 +174,34 @@ class AudioClassifier:
             S = librosa.util.fix_length(spectrogram, size=size)
             S_db = librosa.power_to_db(S, ref=np.max)
             S_db_norm = (S_db - S_db.min()) / (S_db.max() - S_db.min() + EPSILON)
+            
+            logger.debug(
+                "Spectrogramme généré avec succès",
+                extra={"extra": {
+                    "audio_path": audio_path,
+                    "spectrogram_shape": S_db_norm.shape,
+                    "sample_rate": sr
+                }}
+            )
+            
             return S_db_norm
-        except (librosa.util.exceptions.NoDataError, OSError) as e:
+        except librosa.util.exceptions.NoDataError as e:
+            logger.exception(
+                "Erreur: pas de données audio",
+                extra={"extra": {
+                    "audio_path": audio_path,
+                    "error_type": "NoDataError"
+                }}
+            )
+            raise RuntimeError(f"Erreur conversion audio: {e}") from e
+        except OSError as e:
+            logger.exception(
+                "Erreur OS lors de la conversion audio",
+                extra={"extra": {
+                    "audio_path": audio_path,
+                    "error_type": "OSError"
+                }}
+            )
             raise RuntimeError(f"Erreur conversion audio: {e}") from e
     
     def extract_features(self, spectrogram_tensor: torch.Tensor) -> np.ndarray:
@@ -129,6 +218,7 @@ class AudioClassifier:
             RuntimeError: Si le modèle n'est pas chargé.
         """
         if self.model is None:
+            logger.error("Tentative d'extraction de features avec modèle non chargé")
             raise RuntimeError("Modèle non chargé")
         
         with torch.no_grad():
@@ -201,6 +291,10 @@ class AudioClassifier:
         """
         if self.model is None:
             # Mode fallback si modèle non chargé
+            logger.warning(
+                "Modèle non chargé, utilisation du mode fallback",
+                extra={"extra": {"audio_path": audio_path}}
+            )
             genre_id = np.random.randint(0, NUM_GENRES)
             confidence = np.random.uniform(
                 FALLBACK_CONFIDENCE_MIN, 
@@ -218,6 +312,15 @@ class AudioClassifier:
                     else np.random.rand(NUM_GENRES)
                 )
             }
+        
+        logger.info(
+            "Prédiction de genre audio",
+            extra={"extra": {
+                "audio_path": audio_path,
+                "return_features": return_features,
+                "return_probabilities": return_probabilities
+            }}
+        )
         
         spectrogram = self.convert_song_to_matrix(audio_path)
         
@@ -239,8 +342,20 @@ class AudioClassifier:
                     else None
                 )
             
+            predicted_genre = self.LABEL_MAPPING[genre_id]
+            
+            logger.info(
+                "Prédiction terminée avec succès",
+                extra={"extra": {
+                    "audio_path": audio_path,
+                    "predicted_genre": predicted_genre,
+                    "confidence": confidence,
+                    "genre_id": genre_id
+                }}
+            )
+            
             result: dict[str, Any] = {
-                'genre': self.LABEL_MAPPING[genre_id],
+                'genre': predicted_genre,
                 'confidence': confidence
             }
             
@@ -252,7 +367,23 @@ class AudioClassifier:
             
             return result
             
-        except (RuntimeError, ValueError) as e:
+        except RuntimeError as e:
+            logger.exception(
+                "Erreur runtime lors de la prédiction",
+                extra={"extra": {
+                    "audio_path": audio_path,
+                    "error_type": "RuntimeError"
+                }}
+            )
+            raise RuntimeError(f"Erreur lors de la prédiction: {e}") from e
+        except ValueError as e:
+            logger.exception(
+                "Erreur de valeur lors de la prédiction",
+                extra={"extra": {
+                    "audio_path": audio_path,
+                    "error_type": "ValueError"
+                }}
+            )
             raise RuntimeError(f"Erreur lors de la prédiction: {e}") from e
     
     def is_loaded(self) -> bool:

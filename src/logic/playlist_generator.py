@@ -18,6 +18,9 @@ from src.config import (
     DEFAULT_PLAYLIST_SIZE,
     FEATURE_VIEW_SIZE,
 )
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class PlaylistPathfinder:
@@ -86,9 +89,24 @@ class PlaylistPathfinder:
             RuntimeError: Si la PCA échoue.
         """
         if len(features_list) < MIN_FEATURES_FOR_REDUCTION:
+            logger.warning(
+                "Nombre de features insuffisant pour PCA",
+                extra={"extra": {
+                    "features_count": len(features_list),
+                    "min_required": MIN_FEATURES_FOR_REDUCTION
+                }}
+            )
             return None, None, None
         
         try:
+            logger.info(
+                "Calcul de la PCA",
+                extra={"extra": {
+                    "features_count": len(features_list),
+                    "n_components": PCA_N_COMPONENTS
+                }}
+            )
+            
             features_array = np.array(features_list)
             scaler = StandardScaler()
             features_scaled = scaler.fit_transform(features_array)
@@ -96,11 +114,38 @@ class PlaylistPathfinder:
             pca = PCA(n_components=PCA_N_COMPONENTS)
             features_pca = pca.fit_transform(features_scaled)
             
+            explained_variance = sum(pca.explained_variance_ratio_)
+            
             self.pca_model = pca
             self.scaler = scaler
             
+            logger.info(
+                "PCA calculée avec succès",
+                extra={"extra": {
+                    "features_count": len(features_list),
+                    "explained_variance": explained_variance,
+                    "output_shape": features_pca.shape
+                }}
+            )
+            
             return features_pca, pca, scaler
-        except (ValueError, TypeError) as e:
+        except ValueError as e:
+            logger.exception(
+                "Erreur de valeur lors de la PCA",
+                extra={"extra": {
+                    "features_count": len(features_list),
+                    "error_type": "ValueError"
+                }}
+            )
+            raise RuntimeError(f"Erreur lors de la PCA: {e}") from e
+        except TypeError as e:
+            logger.exception(
+                "Erreur de type lors de la PCA",
+                extra={"extra": {
+                    "features_count": len(features_list),
+                    "error_type": "TypeError"
+                }}
+            )
             raise RuntimeError(f"Erreur lors de la PCA: {e}") from e
     
     def perform_tsne(
@@ -147,8 +192,34 @@ class PlaylistPathfinder:
             self.tsne_model = tsne
             self.scaler = scaler
             
+            logger.info(
+                "t-SNE calculée avec succès",
+                extra={"extra": {
+                    "features_count": len(features_list),
+                    "perplexity": perplexity,
+                    "output_shape": features_tsne.shape
+                }}
+            )
+            
             return features_tsne, tsne, scaler
-        except (ValueError, TypeError) as e:
+        except ValueError as e:
+            logger.exception(
+                "Erreur de valeur lors de la t-SNE",
+                extra={"extra": {
+                    "features_count": len(features_list),
+                    "perplexity": perplexity,
+                    "error_type": "ValueError"
+                }}
+            )
+            raise RuntimeError(f"Erreur lors de la t-SNE: {e}") from e
+        except TypeError as e:
+            logger.exception(
+                "Erreur de type lors de la t-SNE",
+                extra={"extra": {
+                    "features_count": len(features_list),
+                    "error_type": "TypeError"
+                }}
+            )
             raise RuntimeError(f"Erreur lors de la t-SNE: {e}") from e
     
     def perform_dimensionality_reduction(
@@ -366,9 +437,51 @@ class PlaylistPathfinder:
                     })
                     used_tracks.add(closest_track)
             
+            logger.info(
+                "Playlist générée avec succès",
+                extra={"extra": {
+                    "num_tracks": len(playlist_tracks),
+                    "track1_idx": track1_idx,
+                    "track2_idx": track2_idx,
+                    "requested_tracks": num_tracks
+                }}
+            )
+            
             return playlist_tracks, line_points_2d, p1_2d, p2_2d
             
-        except (ValueError, KeyError, IndexError) as e:
+        except ValueError as e:
+            logger.exception(
+                "Erreur de valeur lors de la génération de playlist",
+                extra={"extra": {
+                    "track1_idx": track1_idx,
+                    "track2_idx": track2_idx,
+                    "num_tracks": num_tracks,
+                    "tracks_df_length": len(tracks_df),
+                    "features_length": len(raw_features),
+                    "error_type": "ValueError"
+                }}
+            )
+            raise RuntimeError(f"Erreur génération playlist: {e}") from e
+        except KeyError as e:
+            logger.exception(
+                "Clé manquante lors de la génération de playlist",
+                extra={"extra": {
+                    "track1_idx": track1_idx,
+                    "track2_idx": track2_idx,
+                    "missing_key": str(e),
+                    "error_type": "KeyError"
+                }}
+            )
+            raise RuntimeError(f"Erreur génération playlist: {e}") from e
+        except IndexError as e:
+            logger.exception(
+                "Erreur d'index lors de la génération de playlist",
+                extra={"extra": {
+                    "track1_idx": track1_idx,
+                    "track2_idx": track2_idx,
+                    "error_type": "IndexError"
+                }}
+            )
             raise RuntimeError(f"Erreur génération playlist: {e}") from e
     
     def generate_playlist_line_from_pca_df(
@@ -485,7 +598,33 @@ class PlaylistPathfinder:
                 'genre_distribution': genre_distribution.to_dict()
             }
             
+            logger.debug(
+                "Analyse de qualité de playlist terminée",
+                extra={"extra": {
+                    "num_tracks": analysis['num_tracks'],
+                    "unique_genres": analysis['unique_genres'],
+                    "avg_similarity": analysis['avg_cosine_similarity']
+                }}
+            )
+            
             return analysis
             
-        except (KeyError, TypeError) as e:
+        except KeyError as e:
+            logger.exception(
+                "Clé manquante lors de l'analyse de playlist",
+                extra={"extra": {
+                    "playlist_length": len(playlist),
+                    "missing_key": str(e),
+                    "error_type": "KeyError"
+                }}
+            )
+            raise RuntimeError(f"Erreur lors de l'analyse : {e}") from e
+        except TypeError as e:
+            logger.exception(
+                "Erreur de type lors de l'analyse de playlist",
+                extra={"extra": {
+                    "playlist_length": len(playlist),
+                    "error_type": "TypeError"
+                }}
+            )
             raise RuntimeError(f"Erreur lors de l'analyse : {e}") from e

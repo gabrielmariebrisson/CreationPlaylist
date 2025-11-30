@@ -1,0 +1,2 @@
+"""Utilitaires pour l'application."""
+
