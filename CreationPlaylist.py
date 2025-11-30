@@ -1,24 +1,9 @@
 import streamlit as st
-import spotipy
-from spotipy.oauth2 import SpotifyOAuth
-import os
-import librosa
 import numpy as np
-import torch
-import torch.nn.functional as F
-from io import BytesIO
-import tempfile
-from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
 import plotly.express as px
 import plotly.graph_objects as go
-import requests
-import json
-from datetime import datetime
-import matplotlib.pyplot as plt
 load_dotenv()
 
 # Configuration du logging structuré
@@ -33,28 +18,17 @@ StructuredLogger.configure(
 
 # Imports des nouvelles classes modulaires
 from src.services.spotify_service import SpotifyService
+from src.services.deezer_service import DeezerService
+from src.services.track_processor import TrackProcessor
 from src.models.audio_classifier import AudioClassifier
 from src.logic.playlist_generator import PlaylistPathfinder
-from src.config import FEATURE_VIEW_SIZE
+from src.utils.visualization import visualize_playlist_transition
+from src.config import GENRE_LABEL_MAPPING, GENRE_COLORS, LANGUAGES
 
 from deep_translator import GoogleTranslator
 
 # Logger pour le fichier principal
 logger = logging.getLogger(__name__)
-
-# --- Configuration de la traduction automatique ---
-LANGUAGES = {
-    "fr": "🇫🇷 Français",
-    "en": "🇬🇧 English",
-    "es": "🇪🇸 Español",
-    "de": "🇩🇪 Deutsch",
-    "it": "🇮🇹 Italiano",
-    "pt": "🇵🇹 Português",
-    "ja": "🇯🇵 日本語",
-    "zh-CN": "🇨🇳 中文",
-    "ar": "🇸🇦 العربية",
-    "ru": "🇷🇺 Русский"
-}
 
 # Initialisation de la langue
 if 'language' not in st.session_state:
@@ -101,19 +75,7 @@ st.set_page_config(
 )
 
 # --- CONSTANTES ET CONFIGURATION ---
-LABEL_MAPPING = {
-    0: 'blues', 1: 'classical', 2: 'country', 3: 'disco', 4: 'hiphop',
-    5: 'jazz', 6: 'metal', 7: 'pop', 8: 'reggae', 9: 'rock'
-}
-
-GENRE_COLORS = {
-    'blues': '#1f77b4', 'classical': '#ff7f0e', 'country': '#2ca02c',
-    'disco': '#d62728', 'hiphop': '#9467bd', 'jazz': '#8c564b',
-    'metal': '#e377c2', 'pop': '#7f7f7f', 'reggae': '#bcbd22', 'rock': '#17becf'
-}
-
-SPOTIFY_SCOPE = "user-library-read user-top-read playlist-modify-public playlist-modify-private user-read-recently-played"
-DEEZER_BASE_URL = "https://api.deezer.com"
+# Toutes les constantes sont maintenant dans src/config.py
 
 
 # --- INITIALISATION DES SERVICES ---
@@ -136,566 +98,17 @@ def init_playlist_pathfinder():
     """Initialise le générateur de playlist avec cache Streamlit."""
     return PlaylistPathfinder()
 
-
-# --- FONCTIONS DEEZER ---
-def search_deezer_tracks(query, limit=10):
-    """Recherche des tracks sur Deezer"""
-    try:
-        url = f"{DEEZER_BASE_URL}/search"
-        params = {
-            'q': query,
-            'limit': limit
-        }
-        
-        response = requests.get(url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            tracks = []
-            
-            for item in data.get('data', []):
-                track = {
-                    'id': item.get('id'),
-                    'name': item.get('title'),
-                    'artists': item.get('artist', {}).get('name', ''),
-                    'preview_url': item.get('preview'),
-                    'album': item.get('album', {}).get('title', ''),
-                    'duration': item.get('duration'),
-                    'deezer_id': item.get('id')
-                }
-                tracks.append(track)
-            
-            return tracks
-        else:
-            st.error(f"Erreur API Deezer: {response.status_code}")
-            return []
-    except Exception as e:
-        st.error(f"Erreur recherche Deezer: {str(e)}")
-        return []
-
-def download_deezer_preview(preview_url, output_path):
-    """Télécharge l'extrait audio de 30s depuis Deezer"""
-    try:
-        if not preview_url:
-            return False
-            
-        response = requests.get(preview_url)
-        if response.status_code == 200:
-            with open(output_path, 'wb') as f:
-                f.write(response.content)
-            return True
-        else:
-            return False
-    except Exception as e:
-        st.error(f"Erreur téléchargement Deezer: {str(e)}")
-        return False
-
-
-# --- ARCHITECTURE DU MODÈLE ---
-# Les fonctions suivantes sont maintenant gérées par AudioClassifier
-# convert_song_to_matrix, load_model, extract_features, analyze_audio_genre
-
-def analyze_audio_genre(audio_path, classifier):
-    """
-    Wrapper pour compatibilité avec l'ancien code.
-    Analyse un fichier audio et prédit son genre.
-    
-    Args:
-        audio_path: Chemin vers le fichier audio
-        classifier: Instance d'AudioClassifier (ou None pour compatibilité)
-    
-    Returns:
-        Tuple (genre, confidence, features, probabilities) ou (None, None, None, None)
-    """
-    if classifier is None:
-        genre_id = np.random.randint(0, 10)
-        confidence = np.random.uniform(0.6, 0.95)
-        return LABEL_MAPPING[genre_id], confidence, None, None
-    
-    try:
-        result = classifier.predict(audio_path, return_features=True, return_probabilities=True)
-        return result['genre'], result['confidence'], result.get('features'), result.get('probabilities')
-    except Exception as e:
-        st.error(f"Erreur prédiction: {str(e)}")
-        return None, None, None, None
-
-# Les fonctions suivantes sont maintenant gérées par PlaylistPathfinder
-# perform_pca, perform_tsne, perform_dimensionality_reduction, generate_playlist_line
-
-def perform_pca(features_list, pathfinder):
-    """Wrapper pour compatibilité - Effectue une PCA sur les features extraites"""
-    return pathfinder.perform_pca(features_list)
-
-def perform_tsne(features_list, pathfinder, random_state=42, perplexity=30):
-    """Wrapper pour compatibilité - Effectue une t-SNE sur les features extraites"""
-    return pathfinder.perform_tsne(features_list, random_state=random_state, perplexity=perplexity)
-
-def perform_dimensionality_reduction(features_list, pathfinder, method='pca', **kwargs):
-    """Wrapper pour compatibilité - Effectue une réduction de dimensionnalité (PCA ou t-SNE)"""
-    return pathfinder.perform_dimensionality_reduction(features_list, method=method, **kwargs)
-
-def generate_playlist_line(pca_df, track1_idx, track2_idx, pathfinder, num_tracks=10):
-    """
-    Wrapper pour compatibilité - Génère une playlist progressive (linéaire) entre deux morceaux.
-    Utilise maintenant les features brutes avec cosine similarity au lieu de PCA.
-    """
-    try:
-        # Extraire les features brutes depuis analyzed_tracks
-        valid_tracks = [t for t in st.session_state.analyzed_tracks if t.get('features') is not None]
-        
-        if len(valid_tracks) < 2:
-            st.error("Pas assez de tracks avec features pour générer une playlist")
-            return None, None, None, None
-        
-        # Créer un mapping multi-clés pour trouver les features
-        # On utilise plusieurs clés car les IDs peuvent varier
-        features_dict = {}
-        for t in valid_tracks:
-            feature = t.get('features')
-            if feature is not None:
-                # Créer des entrées pour différentes clés possibles
-                keys = [
-                    str(t.get('deezer_id', '')),
-                    str(t.get('spotify_id', '')),
-                    str(t.get('name', '')).lower(),
-                    str(t.get('track_id', ''))
-                ]
-                for key in keys:
-                    if key:
-                        features_dict[key] = feature
-        
-        # Extraire les features brutes dans le même ordre que pca_df
-        raw_features_list = []
-        missing_features = []
-        
-        for idx, row in pca_df.iterrows():
-            # Chercher la feature correspondante avec plusieurs stratégies
-            feature = None
-            
-            # Stratégie 1: Par deezer_id
-            deezer_id = row.get('deezer_id')
-            if deezer_id and str(deezer_id) in features_dict:
-                feature = features_dict[str(deezer_id)]
-            
-            # Stratégie 2: Par spotify_id
-            if feature is None:
-                spotify_id = row.get('spotify_id')
-                if spotify_id and str(spotify_id) in features_dict:
-                    feature = features_dict[str(spotify_id)]
-            
-            # Stratégie 3: Par nom (normalisé)
-            if feature is None:
-                name = str(row.get('name', '')).lower()
-                if name in features_dict:
-                    feature = features_dict[name]
-            
-            # Stratégie 4: Recherche directe dans analyzed_tracks
-            if feature is None:
-                name = row.get('name', '')
-                for t in valid_tracks:
-                    if (t.get('name') == name or 
-                        t.get('deezer_id') == deezer_id or 
-                        t.get('spotify_id') == spotify_id):
-                        feature = t.get('features')
-                        if feature is not None:
-                            break
-            
-            if feature is None:
-                missing_features.append(row.get('name', 'Unknown'))
-                # Utiliser un vecteur zéro comme fallback (ne devrait pas arriver normalement)
-                feature = np.zeros(FEATURE_VIEW_SIZE)
-            
-            # S'assurer que la feature est un array numpy
-            if not isinstance(feature, np.ndarray):
-                feature = np.array(feature)
-            
-            raw_features_list.append(feature)
-        
-        if missing_features:
-            st.warning(f"Features non trouvées pour {len(missing_features)} track(s): {missing_features[:3]}")
-        
-        # Convertir en array numpy
-        raw_features = np.array(raw_features_list)
-        
-        # Vérifier la dimension
-        if len(raw_features) == 0:
-            st.error("Aucune feature trouvée")
-            return None, None, None, None
-        
-        # S'assurer que le pathfinder a le modèle PCA chargé pour la visualisation
-        if pathfinder.pca_model is None:
-            # Recalculer la PCA pour la visualisation
-            features_list = [t['features'] for t in valid_tracks if t.get('features') is not None]
-            if len(features_list) >= 2:
-                pathfinder.perform_pca(features_list)
-        
-        # Utiliser la nouvelle méthode avec features brutes
-        return pathfinder.generate_playlist_line_from_pca_df(
-            pca_df=pca_df,
-            raw_features=raw_features,
-            track1_idx=track1_idx,
-            track2_idx=track2_idx,
-            num_tracks=num_tracks
-        )
-    except Exception as e:
-        st.error(f"Erreur génération playlist: {e}")
-        import traceback
-        st.error(traceback.format_exc())
-        return None, None, None, None
-
-def visualize_playlist_transition(pca_df, playlist, line_points, p1, p2, track1_id, track2_id, genre_names):
-    plt.figure(figsize=(14, 10))
-
-    colors = plt.cm.Set3(np.linspace(0, 1, len(genre_names)))
-    for i, genre in enumerate(genre_names):
-        mask = pca_df["genre"] == genre
-        genre_label = LABEL_MAPPING.get(genre)
-        plt.scatter(
-            pca_df[mask]["PC1"], 
-            pca_df[mask]["PC2"], 
-            c=[colors[genre]], 
-            label=genre_label, 
-            alpha=0.3, 
-            s=30
-        )
-
-    plt.plot([p1[0], p2[0]], [p1[1], p2[1]], "k--", linewidth=2, alpha=0.7, label="Playlist Line")
-
-    plt.scatter(
-        line_points[:, 0], line_points[:, 1], 
-        c="red", s=50, alpha=0.5, marker="x", label="Target Points"
-    )
-
-    plt.scatter([p1[0]], [p1[1]], c="blue", s=200, marker="*", 
-                edgecolors="black", linewidth=2, label=f"Start: {track1_id}")
-    plt.scatter([p2[0]], [p2[1]], c="green", s=200, marker="*", 
-                edgecolors="black", linewidth=2, label=f"End: {track2_id}")
-
-    playlist_points = np.array([[track["PC1"], track["PC2"]] for track in playlist])
-    plt.scatter(
-        playlist_points[:, 0], playlist_points[:, 1], 
-        c="red", s=100, alpha=0.8, edgecolors="black", linewidth=1, label="Playlist Tracks"
-    )
-
-    for track in playlist:
-        genre_label = LABEL_MAPPING.get(track["genre"], track.get("genre", "Unknown"))
-        plt.annotate(
-            genre_label,  # afficher le label au lieu du numéro
-            (track["PC1"], track["PC2"]),
-            xytext=(5, 5), textcoords="offset points",
-            fontsize=8, fontweight="bold"
-        )
-
-    for track in playlist:
-        target = track["target_point"]
-        actual = track["actual_point"]
-        plt.plot([target[0], actual[0]], [target[1], actual[1]], "r-", alpha=0.3, linewidth=1)
-
-    plt.xlabel(f"PC1 (variance)") # PCA model not directly available here, so removing variance percentage
-    plt.ylabel(f"PC2 (variance)")
-    plt.title(f"Playlist Generation: {track1_id} -> {track2_id}")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    st.pyplot(plt)
-    plt.close()
-
-
-
-def analyze_playlist_quality(playlist, pathfinder):
-    """
-    Wrapper pour compatibilité - Analyse la qualité d'une playlist générée
-    Compatible avec mode transition ET mode genre
-    """
-    try:
-        return pathfinder.analyze_playlist_quality(playlist)
-    except Exception as e:
-        st.error(f"Erreur lors de l'analyse : {str(e)}")
-        return None
-
-# --- FONCTIONS SPOTIFY ---
-# Les fonctions suivantes sont maintenant gérées par SpotifyService
-# get_spotify_oauth, get_spotify_client, export_playlist_to_spotify
-
-def get_spotify_oauth():
-    """Wrapper pour compatibilité - OAuth pour Spotify"""
-    spotify_service = init_spotify_service()
-    return spotify_service.auth_manager
-
-def get_spotify_client():
-    """Wrapper pour compatibilité - Client Spotify avec refresh token permanent depuis env"""
-    spotify_service = init_spotify_service()
-    client = spotify_service.get_client()
-    if not client:
-        st.error(_("❌ REFRESH_TOKEN_SPOTIFY manquant dans .env"))
-    return client
-
-def export_playlist_to_spotify(spotify_service, playlist_tracks, playlist_name, playlist_description=""):
-    """Wrapper pour compatibilité - Exporte une playlist vers Spotify avec recherche automatique des URIs manquants"""
-    if not spotify_service:
-        st.error(_("❌ Service Spotify non disponible"))
-        return None
-    
-    def callback_info(msg):
-        st.info(_(msg))
-    
-    def callback_warning(msg):
-        st.warning(_(msg))
-    
-    def callback_success(msg):
-        st.success(_(msg))
-    
-    def callback_error(msg):
-        st.error(_(msg))
-    
-    result = spotify_service.export_playlist(
-        playlist_tracks,
-        playlist_name,
-        playlist_description,
-        callback_info=callback_info,
-        callback_warning=callback_warning,
-        callback_success=callback_success,
-        callback_error=callback_error
-    )
-    
-    if result:
-        st.markdown(f"[🎵 Ouvrir dans Spotify]({result['external_urls']['spotify']})")
-    
-    return result
+@st.cache_resource
+def init_deezer_service():
+    """Initialise le service Deezer avec cache Streamlit."""
+    return DeezerService()
 
 
 # --- FONCTIONS D'ANALYSE ---
-def find_deezer_track_from_spotify(track_name, artist_name):
-    """
-    Recherche un morceau sur à partir des infos Spotify
-    Retourne le preview_url si trouvé
-    """
-    try:
-        # Construire la requête de recherche
-        query = f"{artist_name} {track_name}"
-        
-        url = f"{DEEZER_BASE_URL}/search"
-        params = {
-            'q': query,
-            'limit': 5  # Prendre les 5 premiers résultats
-        }
-        
-        response = requests.get(url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Parcourir les résultats pour trouver la meilleure correspondance
-            for item in data.get('data', []):
-                deezer_title = item.get('title', '').lower()
-                deezer_artist = item.get('artist', {}).get('name', '').lower()
-                
-                # Vérification simple de correspondance
-                if (track_name.lower() in deezer_title or deezer_title in track_name.lower()) and \
-                   (artist_name.lower() in deezer_artist or deezer_artist in artist_name.lower()):
-                    
-                    preview_url = item.get('preview')
-                    if preview_url:
-                        return preview_url, item.get('id')
-            
-            # Si aucune correspondance exacte, prendre le premier résultat avec preview
-            for item in data.get('data', []):
-                preview_url = item.get('preview')
-                if preview_url:
-                    return preview_url, item.get('id')
-        
-        return None, None
-        
-    except Exception as e:
-        st.warning(f"Erreur recherche: {str(e)}")
-        return None, None
-    
-def match_deezer_to_spotify(track_name, artist_name, spotify_service):
-    """Wrapper pour compatibilité - Trouve le track Spotify correspondant à un track Deezer"""
-    if not spotify_service:
-        return None
-    return spotify_service.match_deezer_to_spotify(track_name, artist_name)
+# Toutes les fonctions métier sont maintenant dans les services src/
 
-def process_track_analysis(track, track_data):
-    """Traite l'analyse d'une track (recherche automatique sur Deezer si Spotify)"""
-    try:
-        classifier = st.session_state.audio_classifier
-        if classifier:
-            with st.spinner(_("Analyse en cours...")):
-                temp_dir = tempfile.mkdtemp()
-                audio_path = os.path.join(temp_dir, f"{track_data['type']}_{track_data['index']}.mp3")
-                
-                preview_url = None
-                deezer_id = None
-                
-                # ✅ Si c'est une track Deezer, utiliser directement son preview
-                if track_data['type'] in ['deezer', 'search_deezer']:
-                    preview_url = track.get('preview_url')
-                    deezer_id = track.get('deezer_id')
-                    
-                    if not preview_url:
-                        st.warning(_("⚠️ Aucun aperçu audio disponible sur Deezer"))
-                        return False
-                
-                # ✅ Si c'est une track Spotify, rechercher sur Deezer
-                else:
-                    st.info(_("🔍 Recherche de l'extrait audio sur Deezer..."))
-                    
-                    # Extraire le nom de l'artiste (peut être une string ou une liste)
-                    artists = track.get('artists', '')
-                    if isinstance(artists, list):
-                        artist_name = ', '.join([artist['name'] for artist in artists])
-                    else:
-                        artist_name = artists
-                    
-                    # Rechercher sur Deezer
-                    preview_url, deezer_id = find_deezer_track_from_spotify(
-                        track['name'], 
-                        artist_name
-                    )
-                    
-                    if not preview_url:
-                        st.error(_("❌ Impossible de trouver cet extrait"))
-                        st.info(_("💡 Astuce : Essayez de rechercher directement dans l'onglet dédié"))
-                        return False
-                    
-                    st.success(_("✅ Extrait trouvé !"))
-                
-                # Télécharger l'extrait Deezer
-                download_success = download_deezer_preview(preview_url, audio_path)
-                
-                if download_success:
-                    # Analyser le fichier audio
-                    genre, confidence, features, probs = analyze_audio_genre(
-                        audio_path, classifier
-                    )
-                    
-                    if genre:
-                        artists = track.get('artists', '')
-                        if isinstance(artists, list):
-                            artists = ', '.join([artist['name'] for artist in artists])
-                        
-                        # Matcher avec Spotify si c'est une track Deezer
-                        spotify_match = None
-                        if track_data['type'] in ['deezer', 'search_deezer']:
-                            spotify_service = st.session_state.spotify_service
-                            if spotify_service:
-                                spotify_match = match_deezer_to_spotify(
-                                    track['name'], 
-                                    artists, 
-                                    spotify_service
-                                )
-                        
-                        # Créer l'objet track analysé
-                        analyzed_track = {
-                            'name': track['name'],
-                            'artists': artists,
-                            'spotify_id': spotify_match['spotify_id'] if spotify_match else track.get('id'),
-                            'deezer_id': deezer_id,
-                            'uri': spotify_match['uri'] if spotify_match else track.get('uri'),
-                            'preview_url': preview_url,
-                            'source': 'deezer' if track_data['type'] in ['deezer', 'search_deezer'] else 'spotify',
-                            'genre': genre,
-                            'confidence': confidence,
-                            'features': features,
-                            'probabilities': probs
-                        }
-                        
-                        if spotify_match:
-                            st.info(_(f"🎵 Trouvé sur Spotify: {spotify_match['name']}"))
-                        
-                        st.session_state.analyzed_tracks.append(analyzed_track)
-                        st.success(_(f"✅ {track['name']} - {genre} ({confidence:.1%})"))
-                        return True
-                    else:
-                        st.error(_("❌ Erreur lors de la prédiction du genre"))
-                        return False
-                else:
-                    st.error(_("❌ Impossible de télécharger l'aperçu audio"))
-                    return False
-        else:
-            st.warning(_("⚠️ Modèle non chargé"))
-            return False
-            
-    except Exception as e:
-        st.error(_(f"❌ Erreur lors de l'analyse: {e}"))
-        import traceback
-        st.error(traceback.format_exc())
-        return False
-
-def process_track_addition(track, source='spotify'):
-    """
-    Ajoute une track à la playlist, en réutilisant l'analyse existante si disponible.
-    - st.session_state.analyzed_tracks : contient les analyses complètes (genre, confidence, etc.)
-    - st.session_state.playlist_tracks : contient les morceaux ajoutés à la playlist finale
-    """
-    try:
-        # --- Vérifier si le morceau est déjà dans la playlist ---
-        already_in_playlist = any(
-            t.get('deezer_id') == track.get('id') or t['name'].lower() == track['name'].lower()
-            for t in st.session_state.playlist_tracks
-        )
-        if already_in_playlist:
-            st.info(_(f"✅ '{track['name']}' est déjà dans la playlist."))
-            return False
-
-        # --- Vérifier si le morceau a déjà été analysé ---
-        existing_analysis = next(
-            (t for t in st.session_state.analyzed_tracks
-             if t.get('deezer_id') == track.get('id')
-             or t.get('spotify_id') == track.get('id')
-             or t['name'].lower() == track['name'].lower()),
-            None
-        )
-
-        artists = track.get('artists', '')
-        if isinstance(artists, list):
-            artists = ', '.join([artist['name'] for artist in artists])
-
-        is_deezer = track.get('deezer_id') is not None or source == 'deezer'
-
-        # --- Si on a déjà une analyse : réutiliser les infos ---
-        if existing_analysis:
-            playlist_entry = {
-                'name': existing_analysis['name'],
-                'artists': existing_analysis['artists'],
-                'spotify_id': existing_analysis.get('spotify_id'),
-                'deezer_id': existing_analysis.get('deezer_id'),
-                'uri': existing_analysis.get('uri'),
-                'preview_url': existing_analysis.get('preview_url'),
-                'source': existing_analysis.get('source'),
-                'genre': existing_analysis.get('genre'),
-                'confidence': existing_analysis.get('confidence'),
-                'features': existing_analysis.get('features', {}),
-                'probabilities': existing_analysis.get('probabilities', {})
-            }
-
-            st.session_state.playlist_tracks.append(playlist_entry)
-            st.success(_(f"✅ '{track['name']}' ajouté à la playlist depuis les analyses existantes."))
-            return True
-
-        # --- Sinon, ajout brut sans analyse ---
-        track_data = {
-            'name': track['name'],
-            'artists': artists,
-            'spotify_id': track.get('id') if not is_deezer else None,
-            'deezer_id': track.get('deezer_id'),
-            'uri': track.get('uri'),
-            'preview_url': track.get('preview_url'),
-            'source': 'deezer' if is_deezer else 'spotify',
-            'genre': 'Non analysé',
-            'confidence': 0.0,
-            'features': {},
-            'probabilities': {}
-        }
-
-        st.session_state.playlist_tracks.append(track_data)
-        st.success(_(f"✅ '{track['name']}' ajouté à la playlist (non analysé)."))
-        return True
-
-    except Exception as e:
-        st.error(_(f"❌ Erreur lors de l'ajout du morceau: {e}"))
-        import traceback
-        st.error(traceback.format_exc())
-        return False
+# --- FONCTIONS SPOTIFY ---
+# Toutes les fonctions Spotify sont maintenant dans SpotifyService
 
 
 # Bouton de redirection
@@ -747,6 +160,10 @@ if 'spotify_service' not in st.session_state:
     st.session_state.spotify_service = None
 if 'playlist_pathfinder' not in st.session_state:
     st.session_state.playlist_pathfinder = None
+if 'deezer_service' not in st.session_state:
+    st.session_state.deezer_service = None
+if 'track_processor' not in st.session_state:
+    st.session_state.track_processor = None
 # Compatibilité avec ancien code
 if 'model' not in st.session_state:
     st.session_state.model = None
@@ -787,6 +204,8 @@ with st.sidebar:
         st.session_state.audio_classifier = init_audio_classifier(model_path)
         st.session_state.spotify_service = init_spotify_service()
         st.session_state.playlist_pathfinder = init_playlist_pathfinder()
+        st.session_state.deezer_service = init_deezer_service()
+        st.session_state.track_processor = TrackProcessor()
         
         # Compatibilité avec ancien code
         st.session_state.model = st.session_state.audio_classifier
@@ -832,7 +251,8 @@ with tab2:
     if deezer_query:
         if st.button(_("🔍 Rechercher"), type="primary"):
             with st.spinner(_("Recherche en cours...")):
-                deezer_results = search_deezer_tracks(deezer_query, deezer_limit)
+                deezer_service = st.session_state.deezer_service
+                deezer_results = deezer_service.search_tracks(deezer_query, deezer_limit)
                 st.session_state.deezer_search_results = deezer_results
 
                 if deezer_results:
@@ -876,7 +296,20 @@ with tab2:
                         st.button(_("✅ Analysé"), key=f"analyzed_deezer_{i}", disabled=True)
                     else:
                         if st.button(_("🔍 Analyser"), key=f"analyze_deezer_{i}"):
-                            if process_track_analysis(track, {"type": "deezer", "index": i}):
+                            track_processor = st.session_state.track_processor
+                            if track_processor.process_track_analysis(
+                                track,
+                                {"type": "deezer", "index": i},
+                                st.session_state.audio_classifier,
+                                st.session_state.deezer_service,
+                                st.session_state.spotify_service,
+                                st.session_state.analyzed_tracks,
+                                callback_info=lambda msg: st.info(_(msg)),
+                                callback_warning=lambda msg: st.warning(_(msg)),
+                                callback_success=lambda msg: st.success(_(msg)),
+                                callback_error=lambda msg: st.error(_(msg)),
+                                callback_spinner=lambda msg: st.spinner(_(msg))
+                            ):
                                 st.rerun()
 
                 # --- Colonne Ajouter ---
@@ -894,11 +327,41 @@ with tab2:
                         )
                         if already_analyzed:
                             if st.button(_("➕ Ajouter"), key=f"add_playlist_{i}"):
-                                if process_track_addition(track, source='deezer'):
+                                track_processor = st.session_state.track_processor
+                                if track_processor.process_track_addition(
+                                    track,
+                                    'deezer',
+                                    st.session_state.analyzed_tracks,
+                                    st.session_state.playlist_tracks,
+                                    callback_info=lambda msg: st.info(_(msg)),
+                                    callback_success=lambda msg: st.success(_(msg)),
+                                    callback_error=lambda msg: st.error(_(msg))
+                                ):
                                     st.rerun()
                         else:
                             if st.button(_("➕ Ajouter"), key=f"add_playlist_{i}"):
-                                if process_track_analysis(track, {"type": "top", "index": i}) and process_track_addition(track):
+                                track_processor = st.session_state.track_processor
+                                if (track_processor.process_track_analysis(
+                                    track,
+                                    {"type": "top", "index": i},
+                                    st.session_state.audio_classifier,
+                                    st.session_state.deezer_service,
+                                    st.session_state.spotify_service,
+                                    st.session_state.analyzed_tracks,
+                                    callback_info=lambda msg: st.info(_(msg)),
+                                    callback_warning=lambda msg: st.warning(_(msg)),
+                                    callback_success=lambda msg: st.success(_(msg)),
+                                    callback_error=lambda msg: st.error(_(msg)),
+                                    callback_spinner=lambda msg: st.spinner(_(msg))
+                                ) and track_processor.process_track_addition(
+                                    track,
+                                    'deezer',
+                                    st.session_state.analyzed_tracks,
+                                    st.session_state.playlist_tracks,
+                                    callback_info=lambda msg: st.info(_(msg)),
+                                    callback_success=lambda msg: st.success(_(msg)),
+                                    callback_error=lambda msg: st.error(_(msg))
+                                )):
                                     st.rerun()
 
 
@@ -956,16 +419,14 @@ with tab3:
                     pathfinder = st.session_state.playlist_pathfinder
                     if reduction_method == 'tsne':
                         perplexity_val = st.session_state.get('tsne_perplexity', 30)
-                        result, model, scaler = perform_dimensionality_reduction(
+                        result, model, scaler = pathfinder.perform_dimensionality_reduction(
                             features_list, 
-                            pathfinder,
                             method='tsne',
                             perplexity=perplexity_val
                         )
                     else:
-                        result, model, scaler = perform_dimensionality_reduction(
+                        result, model, scaler = pathfinder.perform_dimensionality_reduction(
                             features_list, 
-                            pathfinder,
                             method='pca'
                         )
                     
@@ -1118,27 +579,60 @@ with tab4:
                 if track1_idx != track2_idx:
                     with st.spinner(_("Génération de la playlist...")):
                         pathfinder = st.session_state.playlist_pathfinder
-                        playlist, line_points, p1, p2 = generate_playlist_line(
-                            st.session_state.pca_df, 
-                            track1_idx, 
-                            track2_idx, 
-                            pathfinder,
-                            num_tracks
-                        )
                         
-                        if playlist is not None:
-                            st.session_state.generated_playlist = playlist
-                            st.session_state.line_points = line_points
-                            st.session_state.p1 = p1
-                            st.session_state.p2 = p2
-                            st.session_state.track1_idx = track1_idx
-                            st.session_state.track2_idx = track2_idx
-                            pathfinder = st.session_state.playlist_pathfinder
-                            st.session_state.playlist_analysis = analyze_playlist_quality(playlist, pathfinder)
-                            st.success(_(f"✅ Playlist de {len(playlist)} tracks générée!"))
-                        else:
-                            st.error(_("❌ Échec de la génération de la playlist"))
-                        visualize_playlist_transition(st.session_state.pca_df, playlist, line_points, p1, p2, track1_idx, track2_idx, list(LABEL_MAPPING.keys()))
+                        # Extraire les features brutes depuis analyzed_tracks
+                        try:
+                            raw_features, missing_tracks = pathfinder.extract_raw_features_from_analyzed_tracks(
+                                st.session_state.pca_df,
+                                st.session_state.analyzed_tracks
+                            )
+                            
+                            if missing_tracks:
+                                st.warning(_(f"Features non trouvées pour {len(missing_tracks)} track(s): {missing_tracks[:3]}"))
+                            
+                            # S'assurer que le pathfinder a le modèle PCA chargé pour la visualisation
+                            if pathfinder.pca_model is None:
+                                features_list = [t['features'] for t in st.session_state.analyzed_tracks if t.get('features') is not None]
+                                if len(features_list) >= 2:
+                                    pathfinder.perform_pca(features_list)
+                            
+                            # Générer la playlist
+                            playlist, line_points, p1, p2 = pathfinder.generate_playlist_line_from_pca_df(
+                                pca_df=st.session_state.pca_df,
+                                raw_features=raw_features,
+                                track1_idx=track1_idx,
+                                track2_idx=track2_idx,
+                                num_tracks=num_tracks
+                            )
+                            
+                            if playlist is not None:
+                                st.session_state.generated_playlist = playlist
+                                st.session_state.line_points = line_points
+                                st.session_state.p1 = p1
+                                st.session_state.p2 = p2
+                                st.session_state.track1_idx = track1_idx
+                                st.session_state.track2_idx = track2_idx
+                                st.session_state.playlist_analysis = pathfinder.analyze_playlist_quality(playlist)
+                                st.success(_(f"✅ Playlist de {len(playlist)} tracks générée!"))
+                            else:
+                                st.error(_("❌ Échec de la génération de la playlist"))
+                            
+                            # Visualiser la transition
+                            visualize_playlist_transition(
+                                st.session_state.pca_df,
+                                playlist,
+                                line_points,
+                                p1,
+                                p2,
+                                track1_idx,
+                                track2_idx,
+                                list(GENRE_LABEL_MAPPING.keys()),
+                                label_mapping=GENRE_LABEL_MAPPING
+                            )
+                        except Exception as e:
+                            st.error(_(f"❌ Erreur génération playlist: {e}"))
+                            import traceback
+                            st.error(traceback.format_exc())
 
                 else:
                     st.warning(_("⚠️ Sélectionnez deux tracks différentes"))
@@ -1221,7 +715,7 @@ with tab4:
                             st.session_state.p1 = None
                             st.session_state.p2 = None
                             pathfinder = st.session_state.playlist_pathfinder
-                            st.session_state.playlist_analysis = analyze_playlist_quality(playlist, pathfinder)
+                            st.session_state.playlist_analysis = pathfinder.analyze_playlist_quality(playlist)
                             st.success(_(f"✅ Playlist de {len(playlist)} tracks générée!"))
                         else:
                             st.error(_("❌ Aucune track trouvée pour ces genres"))
@@ -1255,7 +749,7 @@ with tab4:
                             list(analysis['genre_distribution'].items()),
                             columns=[_('Genre'), _('Count')]
                         )
-                        st.dataframe(genre_dist, use_container_width=True)
+                        st.dataframe(genre_dist, width='stretch')
                     
                     with col2:
                         st.write(_("**Statistiques de distance:**"))
@@ -1347,14 +841,30 @@ with tab4:
                         ]
                         
                         if spotify_only_tracks:
-                            result = export_playlist_to_spotify(
-                                spotify_service, 
-                                spotify_only_tracks, 
-                                playlist_name, 
-                                playlist_desc
+                            def callback_info(msg):
+                                st.info(_(msg))
+                            
+                            def callback_warning(msg):
+                                st.warning(_(msg))
+                            
+                            def callback_success(msg):
+                                st.success(_(msg))
+                            
+                            def callback_error(msg):
+                                st.error(_(msg))
+                            
+                            result = spotify_service.export_playlist(
+                                spotify_only_tracks,
+                                playlist_name,
+                                playlist_desc,
+                                callback_info=callback_info,
+                                callback_warning=callback_warning,
+                                callback_success=callback_success,
+                                callback_error=callback_error
                             )
                             
                             if result:
+                                st.markdown(f"[🎵 Ouvrir dans Spotify]({result['external_urls']['spotify']})")
                                 st.balloons()
                         else:
                             st.warning(_("Aucune track Spotify dans la playlist"))

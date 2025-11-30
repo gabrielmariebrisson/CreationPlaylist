@@ -3,7 +3,7 @@
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from pathlib import Path
 
@@ -21,8 +21,17 @@ class JSONFormatter(logging.Formatter):
         Returns:
             Chaîne JSON formatée.
         """
+        # Utiliser datetime.now(timezone.utc) au lieu de datetime.utcnow() (déprécié)
+        timestamp = datetime.now(timezone.utc).isoformat()
+        # Normaliser le format UTC en 'Z' pour compatibilité (ISO 8601)
+        if timestamp.endswith('+00:00'):
+            timestamp = timestamp.replace('+00:00', 'Z')
+        elif not timestamp.endswith('Z'):
+            # Si le format n'a pas de timezone, ajouter 'Z' pour UTC
+            timestamp = timestamp + 'Z'
+        
         log_data: Dict[str, Any] = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": timestamp,
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

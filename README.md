@@ -16,8 +16,11 @@ Application web intelligente de génération de playlists musicales basée sur l
 - [Configuration](#configuration)
 - [Utilisation](#utilisation)
 - [Structure du projet](#structure-du-projet)
+- [Docker](#-docker)
 - [Tests](#tests)
+- [Méthodologie technique détaillée](#méthodologie-technique-détaillée)
 - [Auteurs](#auteurs)
+- [Références](#références)
 
 ## 🎯 Vue d'ensemble
 
@@ -26,7 +29,8 @@ Ce projet propose une solution complète pour la génération automatique de pla
 - **Deep Learning** : Classification des genres musicaux avec un CNN pré-entraîné
 - **Feature Extraction** : Extraction d'embeddings audio (1536 dimensions)
 - **Pathfinding Intelligent** : Génération de playlists progressives via interpolation dans l'espace des features et recherche par similarité cosinus
-- **Intégration Spotify** : Export direct des playlists générées vers Spotify
+- **Intégration Multi-API** : Support Spotify et Deezer pour la recherche et l'export de playlists
+- **Architecture Modulaire** : Code organisé selon le principe de responsabilité unique (SRP) avec séparation claire entre UI, services et logique métier
 
 ## 🏗️ Architecture
 
@@ -46,7 +50,9 @@ Le projet suit une architecture modulaire respectant le principe de responsabili
 
 ### Services
 
-- **SpotifyService** : Gestion de l'authentification OAuth et des opérations API Spotify
+- **SpotifyService** : Gestion de l'authentification OAuth et des opérations API Spotify (sync et async)
+- **DeezerService** : Recherche et téléchargement d'extraits audio depuis l'API Deezer
+- **TrackProcessor** : Orchestration de l'analyse et de l'ajout de tracks à la playlist
 - **AudioClassifier** : Chargement du modèle PyTorch et prédiction de genres
 - **PlaylistPathfinder** : Génération de playlists basée sur la similarité cosinus
 
@@ -54,13 +60,20 @@ Le projet suit une architecture modulaire respectant le principe de responsabili
 
 ```
 src/
-├── config.py              # Configuration centralisée
+├── config.py                    # Configuration centralisée (constantes, genres, couleurs, langues)
 ├── models/
-│   └── audio_classifier.py    # Classification audio avec CNN
+│   └── audio_classifier.py      # Classification audio avec CNN
 ├── services/
-│   └── spotify_service.py     # Service API Spotify
-└── logic/
-    └── playlist_generator.py  # Génération de playlist
+│   ├── spotify_service.py        # Service API Spotify (sync)
+│   ├── spotify_service_async.py # Service API Spotify (async)
+│   ├── deezer_service.py         # Service API Deezer
+│   ├── track_processor.py        # Processeur de tracks (analyse et ajout)
+│   └── exceptions.py             # Exceptions personnalisées
+├── logic/
+│   └── playlist_generator.py     # Génération de playlist (pathfinding)
+└── utils/
+    ├── logger.py                 # Système de logging structuré (JSON)
+    └── visualization.py          # Visualisation matplotlib des playlists
 ```
 
 ## 🔬 Méthodologie
@@ -210,26 +223,7 @@ REDIRECT_URI_SPOTIFY=http://localhost:8501
 
 ### Option 1: Docker (Recommandé)
 
-#### Production
-```bash
-# Avec docker-compose
-docker-compose up -d
-
-# Ou directement avec Docker
-docker build -t music-playlist-generator .
-docker run -d -p 8501:8501 \
-  -e CLIENT_ID_SPOTIFY=your_client_id \
-  -e CLIENT_SECRET_SPOTIFY=your_client_secret \
-  -e REFRESH_TOKEN_SPOTIFY=your_refresh_token \
-  music-playlist-generator
-```
-
-#### Développement (avec hot reload)
-```bash
-docker-compose -f docker-compose.dev.yml up
-```
-
-L'application sera accessible sur `http://localhost:8501`
+Voir la section [🐳 Docker](#-docker) ci-dessous pour les instructions complètes.
 
 ### Option 2: Installation locale
 
@@ -247,22 +241,24 @@ L'application sera accessible sur `http://localhost:8501`
 
 1. **Recherche de morceaux** :
    - Utilisez l'onglet "🔍 Recherche" pour trouver des morceaux sur Deezer
-   - Analysez les morceaux pour extraire leurs features audio
+   - Analysez les morceaux pour extraire leurs features audio (téléchargement automatique des extraits 30s)
+   - Les morceaux sont automatiquement matchés avec Spotify si disponibles
 
 2. **Analyse des genres** :
    - Consultez l'onglet "📊 Analyse" pour voir la distribution des genres
    - Visualisez les morceaux dans l'espace 2D (PCA ou t-SNE)
+   - Analysez les statistiques de confiance et de diversité
 
 3. **Génération de playlist** :
    - Allez dans l'onglet "🎨 Playlist"
    - Choisissez le mode :
-     - **Transition progressive** : Sélectionnez deux morceaux et générez une playlist entre eux
-     - **Par genre** : Créez une playlist basée sur un ou plusieurs genres
+     - **Transition progressive** : Sélectionnez deux morceaux et générez une playlist entre eux (interpolation dans l'espace 1536D + similarité cosinus)
+     - **Par genre** : Créez une playlist basée sur un ou plusieurs genres (tri par confiance, nom ou aléatoire)
 
 4. **Export vers Spotify** :
-   - Nommez votre playlist
+   - Nommez votre playlist et ajoutez une description
    - Cliquez sur "🎵 Créer la playlist sur Spotify"
-   - La playlist sera créée dans votre compte Spotify
+   - La playlist sera créée dans votre compte Spotify avec tous les morceaux disponibles
 
 ## 📁 Structure du projet
 
@@ -271,33 +267,52 @@ CreationPlaylist/
 ├── CreationPlaylist.py          # Application Streamlit principale
 ├── requirements.txt              # Dépendances Python
 ├── pytest.ini                   # Configuration pytest
-├── .env                         # Variables d'environnement (à créer)
+├── Dockerfile                    # Image Docker pour production
+├── docker-compose.yml            # Configuration Docker production
+├── docker-compose.dev.yml        # Configuration Docker développement
+├── Makefile                      # Commandes Docker simplifiées
+├── .dockerignore                 # Fichiers exclus du build Docker
+├── .env                          # Variables d'environnement (à créer)
 │
-├── src/                         # Code source modulaire
-│   ├── config.py                # Configuration centralisée
+├── src/                          # Code source modulaire
+│   ├── config.py                 # Configuration centralisée (constantes, genres, couleurs, langues)
 │   ├── models/
-│   │   └── audio_classifier.py  # Classification audio
+│   │   └── audio_classifier.py   # Classification audio avec CNN
 │   ├── services/
-│   │   └── spotify_service.py   # Service Spotify
-│   └── logic/
-│       └── playlist_generator.py # Génération de playlist
+│   │   ├── spotify_service.py    # Service Spotify (sync)
+│   │   ├── spotify_service_async.py  # Service Spotify (async)
+│   │   ├── deezer_service.py     # Service API Deezer
+│   │   ├── track_processor.py    # Processeur de tracks (analyse et ajout)
+│   │   └── exceptions.py         # Exceptions personnalisées
+│   ├── logic/
+│   │   └── playlist_generator.py # Génération de playlist (pathfinding)
+│   └── utils/
+│       ├── logger.py             # Système de logging structuré (JSON)
+│       └── visualization.py      # Visualisation matplotlib des playlists
 │
-├── templates/                   # Assets statiques
+├── templates/                    # Assets statiques
 │   └── assets/
-│       ├── images/              # Images de documentation
+│       ├── css/
+│       │   └── styles.css        # Styles CSS
+│       ├── images/               # Images de documentation
 │       └── music/
-│           ├── architecture.py  # Architecture du modèle CNN
+│           ├── architecture.py   # Architecture du modèle CNN
 │           └── best_model_original_loss.pth  # Modèle pré-entraîné
 │
-└── tests/                       # Tests unitaires
-    ├── test_playlist_generator.py
-    ├── conftest.py
-    └── requirements-test.txt
+├── tests/                        # Tests unitaires
+│   ├── test_playlist_generator.py
+│   ├── conftest.py
+│   ├── check_dependencies.py
+│   └── requirements-test.txt
+│
+└── .github/                      # CI/CD
+    └── workflows/
+        └── ci.yml                # Pipeline GitHub Actions
 ```
 
 ## 🐳 Docker
 
-### Utilisation rapide avec Makefile
+### Utilisation rapide avec Makefile (Recommandé)
 
 ```bash
 # Voir toutes les commandes disponibles
@@ -317,31 +332,50 @@ make logs
 
 # Arrêter
 make down
+
+# Tests dans Docker
+make test
+```
+
+### Utilisation avec Docker Compose
+
+#### Production
+```bash
+# Lancer en arrière-plan
+docker-compose up -d
+
+# Voir les logs
+docker-compose logs -f
+
+# Arrêter
+docker-compose down
+```
+
+#### Développement (avec hot reload)
+```bash
+# Lancer avec rechargement automatique
+docker-compose -f docker-compose.dev.yml up
+
+# Rebuild après changement de dépendances
+docker-compose -f docker-compose.dev.yml build --no-cache
 ```
 
 ### Utilisation directe avec Docker
 
 ```bash
-# Build
+# Build l'image
 docker build -t music-playlist-generator .
 
-# Run
+# Lancer le conteneur
 docker run -d -p 8501:8501 \
-  -e CLIENT_ID_SPOTIFY=your_id \
-  -e CLIENT_SECRET_SPOTIFY=your_secret \
-  -e REFRESH_TOKEN_SPOTIFY=your_token \
+  -e CLIENT_ID_SPOTIFY=your_client_id \
+  -e CLIENT_SECRET_SPOTIFY=your_client_secret \
+  -e REFRESH_TOKEN_SPOTIFY=your_refresh_token \
+  --name playlist-generator \
   music-playlist-generator
 ```
 
-### Utilisation avec Docker Compose
-
-```bash
-# Production
-docker-compose up -d
-
-# Développement (avec hot reload)
-docker-compose -f docker-compose.dev.yml up
-```
+**Note** : Créez un fichier `.env` avec vos credentials Spotify avant de lancer Docker. L'application sera accessible sur `http://localhost:8501`
 
 ## 🧪 Tests
 

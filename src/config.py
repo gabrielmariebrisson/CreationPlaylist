@@ -23,6 +23,20 @@ GENRE_LABEL_MAPPING: dict[int, str] = {
 }
 GENRES_LIST: list[str] = list(GENRE_LABEL_MAPPING.values())
 
+# Couleurs pour la visualisation des genres (Plotly)
+GENRE_COLORS: dict[str, str] = {
+    'blues': '#1f77b4',
+    'classical': '#ff7f0e',
+    'country': '#2ca02c',
+    'disco': '#d62728',
+    'hiphop': '#9467bd',
+    'jazz': '#8c564b',
+    'metal': '#e377c2',
+    'pop': '#7f7f7f',
+    'reggae': '#bcbd22',
+    'rock': '#17becf'
+}
+
 # --- Configuration Fallback (quand modèle non chargé) ---
 FALLBACK_CONFIDENCE_MIN: float = 0.6
 FALLBACK_CONFIDENCE_MAX: float = 0.95
@@ -53,4 +67,22 @@ MIN_PLAYLIST_SIZE: int = 2  # Taille minimum d'une playlist
 
 # --- Configuration Numérique ---
 EPSILON: float = 1e-9  # Petite valeur pour éviter division par zéro
+
+# --- Configuration Deezer ---
+DEEZER_BASE_URL: str = "https://api.deezer.com"
+
+# --- Configuration UI ---
+# Langues supportées pour la traduction automatique
+LANGUAGES: dict[str, str] = {
+    "fr": "🇫🇷 Français",
+    "en": "🇬🇧 English",
+    "es": "🇪🇸 Español",
+    "de": "🇩🇪 Deutsch",
+    "it": "🇮🇹 Italiano",
+    "pt": "🇵🇹 Português",
+    "ja": "🇯🇵 日本語",
+    "zh-CN": "🇨🇳 中文",
+    "ar": "🇸🇦 العربية",
+    "ru": "🇷🇺 Русский"
+}
 

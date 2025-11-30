@@ -97,12 +97,3 @@ Vous pouvez ajouter des badges à votre README :
 1. Vérifiez que tous les `__init__.py` sont présents
 2. Vérifiez que les chemins d'import sont corrects
 3. Testez localement : `python -c "from src.services.spotify_service import SpotifyService"`
-
-### Améliorations futures
-
-- [ ] Ajouter un workflow de déploiement
-- [ ] Ajouter des tests de performance
-- [ ] Ajouter un workflow de release automatique
-- [ ] Intégrer avec Docker pour les tests
-- [ ] Ajouter des tests sur différents OS (Windows, macOS)
-
