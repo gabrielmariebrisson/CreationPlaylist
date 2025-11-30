@@ -7,6 +7,13 @@ import spotipy
 from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth
 from dotenv import load_dotenv
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 
 from src.config import (
     SPOTIFY_SCOPE,
@@ -17,10 +24,59 @@ from src.config import (
     SPOTIFY_PLAYLIST_BATCH_SIZE,
 )
 from src.utils.logger import get_logger
+import logging
+from src.services.exceptions import (
+    SpotifyAPIError,
+    SpotifyRateLimitError,
+    SpotifyTimeoutError,
+    SpotifyServerError,
+)
 
 load_dotenv()
 
 logger = get_logger(__name__)
+
+
+def _convert_spotify_exception(exception: Exception) -> SpotifyAPIError:
+    """
+    Convertit une SpotifyException en exception custom pour le retry logic.
+    
+    Args:
+        exception: Exception Spotify originale.
+    
+    Returns:
+        Exception custom appropriée.
+    """
+    if isinstance(exception, SpotifyException):
+        # Vérifier le code HTTP si disponible
+        http_status = getattr(exception, 'http_status', None)
+        
+        if http_status == 429:
+            retry_after = getattr(exception, 'retry_after', None)
+            return SpotifyRateLimitError(
+                f"Rate limit atteint: {str(exception)}",
+                retry_after=retry_after
+            )
+        elif http_status and 500 <= http_status < 600:
+            return SpotifyServerError(
+                f"Erreur serveur Spotify ({http_status}): {str(exception)}",
+                status_code=http_status
+            )
+        elif "timeout" in str(exception).lower() or "timed out" in str(exception).lower():
+            return SpotifyTimeoutError(f"Timeout Spotify: {str(exception)}")
+    
+    # Par défaut, retourner une erreur API générique
+    return SpotifyAPIError(f"Erreur API Spotify: {str(exception)}")
+
+
+# Configuration du retry pour les appels API Spotify
+RETRY_CONFIG = {
+    "stop": stop_after_attempt(3),
+    "wait": wait_exponential(multiplier=2, min=2, max=8),  # 2s, 4s, 8s
+    "retry": retry_if_exception_type(SpotifyAPIError),
+    "before_sleep": before_sleep_log(logger, logging.WARNING),
+    "reraise": True,
+}
 
 
 class SpotifyService:
@@ -160,13 +216,41 @@ class SpotifyService:
             )
             return None
     
+    @retry(**RETRY_CONFIG)
+    def _search_track_with_retry(
+        self,
+        client: spotipy.Spotify,
+        query: str,
+        limit: int
+    ) -> Dict[str, Any]:
+        """
+        Recherche un morceau sur Spotify avec retry logic.
+        
+        Args:
+            client: Client Spotify authentifié.
+            query: Requête de recherche.
+            limit: Nombre maximum de résultats.
+        
+        Returns:
+            Résultat de recherche.
+        
+        Raises:
+            SpotifyAPIError: Si la recherche échoue après tous les retries.
+        """
+        try:
+            results = client.search(q=query, type='track', limit=limit)
+            return results
+        except SpotifyException as e:
+            # Convertir en exception custom pour le retry
+            raise _convert_spotify_exception(e) from e
+    
     def search_track(
         self, 
         query: str, 
         limit: int = SPOTIFY_SEARCH_LIMIT_DEFAULT
     ) -> Optional[Dict[str, Any]]:
         """
-        Recherche un morceau sur Spotify.
+        Recherche un morceau sur Spotify avec retry logic pour gérer les erreurs transitoires.
         
         Args:
             query: Requête de recherche (nom du morceau + artiste).
@@ -189,7 +273,7 @@ class SpotifyService:
             return None
         
         try:
-            results = client.search(q=query, type='track', limit=limit)
+            results = self._search_track_with_retry(client, query, limit)
             num_results = len(results.get('tracks', {}).get('items', []))
             logger.info(
                 "Recherche Spotify réussie",
@@ -200,10 +284,15 @@ class SpotifyService:
                 }}
             )
             return results
-        except SpotifyException as e:
+        except SpotifyAPIError as e:
             logger.exception(
-                "Erreur lors de la recherche Spotify",
-                extra={"extra": {"query": query, "limit": limit, "error_type": "SpotifyException"}}
+                "Erreur API Spotify après retries",
+                extra={"extra": {
+                    "query": query,
+                    "limit": limit,
+                    "error_type": type(e).__name__,
+                    "attempts": 3
+                }}
             )
             return None
     
@@ -213,7 +302,7 @@ class SpotifyService:
         artist_name: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Trouve le track Spotify correspondant à un track Deezer.
+        Trouve le track Spotify correspondant à un track Deezer avec retry logic.
         
         Args:
             track_name: Nom du morceau.
@@ -237,7 +326,8 @@ class SpotifyService:
         
         try:
             query = f"{track_name} {artist_name}"
-            results = client.search(q=query, type='track', limit=SPOTIFY_SEARCH_LIMIT_MATCH)
+            # Utiliser la méthode avec retry
+            results = self._search_track_with_retry(client, query, SPOTIFY_SEARCH_LIMIT_MATCH)
             
             if results['tracks']['items']:
                 best_match = results['tracks']['items'][0]
@@ -262,13 +352,14 @@ class SpotifyService:
                 extra={"extra": {"track_name": track_name, "artist_name": artist_name}}
             )
             return None
-        except SpotifyException as e:
+        except SpotifyAPIError as e:
             logger.exception(
-                "Erreur Spotify lors du matching",
+                "Erreur API Spotify lors du matching après retries",
                 extra={"extra": {
                     "track_name": track_name,
                     "artist_name": artist_name,
-                    "error_type": "SpotifyException"
+                    "error_type": type(e).__name__,
+                    "attempts": 3
                 }}
             )
             return None
@@ -318,7 +409,8 @@ class SpotifyService:
             return None
         
         try:
-            user_info = client.current_user()
+            # Utiliser la méthode avec retry pour get_current_user
+            user_info = self._get_current_user_with_retry(client)
             user_id = user_info['id']
             
             playlist = client.user_playlist_create(
@@ -355,7 +447,8 @@ class SpotifyService:
                     if track_name and artists:
                         try:
                             query = f"{track_name} {artists}"
-                            results = client.search(q=query, type='track', limit=1)
+                            # Utiliser la méthode avec retry
+                            results = self._search_track_with_retry(client, query, 1)
                             
                             if results['tracks']['items']:
                                 found_track = results['tracks']['items'][0]
@@ -363,7 +456,12 @@ class SpotifyService:
                                 found_on_search += 1
                                 if callback_info:
                                     callback_info(f"🔍 Trouvé sur Spotify: {track_name}")
-                        except SpotifyException:
+                        except SpotifyAPIError:
+                            # Erreur après retries - log mais continue
+                            logger.warning(
+                                "Recherche échouée après retries",
+                                extra={"extra": {"track_name": track_name, "artists": artists}}
+                            )
                             if callback_warning:
                                 callback_warning(f"⚠️ Recherche échouée pour: {track_name}")
                 
@@ -421,9 +519,31 @@ class SpotifyService:
                 callback_error(f"❌ Erreur lors de la création de la playlist: {e}")
             return None
     
+    @retry(**RETRY_CONFIG)
+    def _get_current_user_with_retry(
+        self,
+        client: spotipy.Spotify
+    ) -> Dict[str, Any]:
+        """
+        Récupère les informations de l'utilisateur actuel avec retry logic.
+        
+        Args:
+            client: Client Spotify authentifié.
+        
+        Returns:
+            Informations utilisateur.
+        
+        Raises:
+            SpotifyAPIError: Si la récupération échoue après tous les retries.
+        """
+        try:
+            return client.current_user()
+        except SpotifyException as e:
+            raise _convert_spotify_exception(e) from e
+    
     def get_current_user(self) -> Optional[Dict[str, Any]]:
         """
-        Récupère les informations de l'utilisateur actuel.
+        Récupère les informations de l'utilisateur actuel avec retry logic.
         
         Returns:
             Informations utilisateur ou None en cas d'erreur.
@@ -439,15 +559,18 @@ class SpotifyService:
             return None
         
         try:
-            user_info = client.current_user()
+            user_info = self._get_current_user_with_retry(client)
             logger.info(
                 "Informations utilisateur récupérées",
                 extra={"extra": {"user_id": user_info.get('id', 'unknown')}}
             )
             return user_info
-        except SpotifyException as e:
+        except SpotifyAPIError as e:
             logger.exception(
-                "Erreur lors de la récupération des informations utilisateur",
-                extra={"extra": {"error_type": "SpotifyException"}}
+                "Erreur API Spotify lors de la récupération des informations utilisateur après retries",
+                extra={"extra": {
+                    "error_type": type(e).__name__,
+                    "attempts": 3
+                }}
             )
             return None
