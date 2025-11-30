@@ -1,0 +1,27 @@
+version: '3.8'
+
+# Configuration pour le développement avec hot reload
+services:
+  playlist-generator-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: music-playlist-generator-dev
+    ports:
+      - "8501:8501"
+    environment:
+      - CLIENT_ID_SPOTIFY=${CLIENT_ID_SPOTIFY}
+      - CLIENT_SECRET_SPOTIFY=${CLIENT_SECRET_SPOTIFY}
+      - REFRESH_TOKEN_SPOTIFY=${REFRESH_TOKEN_SPOTIFY}
+      - REDIRECT_URI_SPOTIFY=${REDIRECT_URI_SPOTIFY:-http://localhost:8501}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Monter tout le code source en mode développement (écriture)
+      - .:/app
+      # Exclure les dossiers qui ne doivent pas être montés
+      - /app/__pycache__
+      - /app/.pytest_cache
+      - /app/htmlcov
+    command: ["streamlit", "run", "CreationPlaylist.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.runOnSave=true", "--server.fileWatcherType=poll"]
+    restart: unless-stopped
+

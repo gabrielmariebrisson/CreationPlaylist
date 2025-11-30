@@ -122,8 +122,8 @@ Pour chaque point interpolé dans l'espace 1536D :
 
 ### Prérequis
 
-- Python 3.10 ou supérieur
-- pip ou conda
+- **Option Docker** : Docker et Docker Compose installés
+- **Option locale** : Python 3.10 ou supérieur, pip ou conda
 - Compte Spotify Developer (pour l'export de playlists)
 
 ### Installation des dépendances
@@ -208,7 +208,30 @@ REDIRECT_URI_SPOTIFY=http://localhost:8501
 
 ## 🚀 Utilisation
 
-### Lancer l'application
+### Option 1: Docker (Recommandé)
+
+#### Production
+```bash
+# Avec docker-compose
+docker-compose up -d
+
+# Ou directement avec Docker
+docker build -t music-playlist-generator .
+docker run -d -p 8501:8501 \
+  -e CLIENT_ID_SPOTIFY=your_client_id \
+  -e CLIENT_SECRET_SPOTIFY=your_client_secret \
+  -e REFRESH_TOKEN_SPOTIFY=your_refresh_token \
+  music-playlist-generator
+```
+
+#### Développement (avec hot reload)
+```bash
+docker-compose -f docker-compose.dev.yml up
+```
+
+L'application sera accessible sur `http://localhost:8501`
+
+### Option 2: Installation locale
 
 ```bash
 # Activer l'environnement (si vous utilisez venv/conda)
@@ -272,6 +295,54 @@ CreationPlaylist/
     └── requirements-test.txt
 ```
 
+## 🐳 Docker
+
+### Utilisation rapide avec Makefile
+
+```bash
+# Voir toutes les commandes disponibles
+make help
+
+# Build l'image
+make build
+
+# Lancer en production
+make up
+
+# Lancer en développement (hot reload)
+make dev
+
+# Voir les logs
+make logs
+
+# Arrêter
+make down
+```
+
+### Utilisation directe avec Docker
+
+```bash
+# Build
+docker build -t music-playlist-generator .
+
+# Run
+docker run -d -p 8501:8501 \
+  -e CLIENT_ID_SPOTIFY=your_id \
+  -e CLIENT_SECRET_SPOTIFY=your_secret \
+  -e REFRESH_TOKEN_SPOTIFY=your_token \
+  music-playlist-generator
+```
+
+### Utilisation avec Docker Compose
+
+```bash
+# Production
+docker-compose up -d
+
+# Développement (avec hot reload)
+docker-compose -f docker-compose.dev.yml up
+```
+
 ## 🧪 Tests
 
 ### Installation des dépendances de test
@@ -291,6 +362,9 @@ pytest tests/ --cov=src --cov-report=html
 
 # Un fichier spécifique
 pytest tests/test_playlist_generator.py -v
+
+# Tests dans Docker
+make test
 ```
 
 ### Couverture des tests

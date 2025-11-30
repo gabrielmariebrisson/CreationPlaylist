@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  playlist-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: music-playlist-generator
+    ports:
+      - "8501:8501"
+    environment:
+      - CLIENT_ID_SPOTIFY=${CLIENT_ID_SPOTIFY}
+      - CLIENT_SECRET_SPOTIFY=${CLIENT_SECRET_SPOTIFY}
+      - REFRESH_TOKEN_SPOTIFY=${REFRESH_TOKEN_SPOTIFY}
+      - REDIRECT_URI_SPOTIFY=${REDIRECT_URI_SPOTIFY:-http://localhost:8501}
+    volumes:
+      # Monter le code source pour le développement (hot reload)
+      - ./src:/app/src:ro
+      - ./CreationPlaylist.py:/app/CreationPlaylist.py:ro
+      # Monter les modèles (si nécessaire)
+      - ./templates/assets/music:/app/templates/assets/music:ro
+      # Persister les logs
+      - ./logs:/app/logs
+      # Cache pour les modèles et données
+      - model-cache:/app/.cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  model-cache:
+    driver: local
+
