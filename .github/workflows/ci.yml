@@ -12,7 +12,7 @@ on:
   workflow_dispatch:  # Permet de déclencher manuellement
 
 env:
-  PYTHON_VERSION: '3.10'
+  PYTHON_VERSION: '3.13'
   POETRY_VERSION: '1.6.0'
 
 jobs:
