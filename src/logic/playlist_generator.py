@@ -16,7 +16,6 @@ from src.config import (
     TSNE_MAX_ITER,
     MIN_FEATURES_FOR_REDUCTION,
     DEFAULT_PLAYLIST_SIZE,
-    FEATURE_VIEW_SIZE,
 )
 from src.utils.logger import get_logger
 
@@ -47,7 +46,7 @@ class PlaylistPathfinder:
         # Normaliser les vecteurs pour éviter les problèmes numériques
         vec1_norm = vec1 / (np.linalg.norm(vec1) + 1e-9)
         vec2_norm = vec2 / (np.linalg.norm(vec2) + 1e-9)
-        return np.dot(vec1_norm, vec2_norm)
+        return float(np.dot(vec1_norm, vec2_norm))
 
     def _cosine_distance(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
@@ -186,12 +185,24 @@ class PlaylistPathfinder:
             n_samples = len(features_list)
             perplexity = min(perplexity, n_samples - 1)
 
-            tsne = TSNE(
-                n_components=TSNE_N_COMPONENTS,
-                perplexity=perplexity,
-                random_state=random_state,
-                max_iter=TSNE_MAX_ITER,
-            )
+            # Compatibilité avec différentes versions de scikit-learn
+            # Les versions récentes utilisent max_iter, les anciennes n'ont pas ce paramètre
+            try:
+                # Essayer avec max_iter (versions récentes de scikit-learn)
+                tsne = TSNE(
+                    n_components=TSNE_N_COMPONENTS,
+                    perplexity=perplexity,
+                    random_state=random_state,
+                    max_iter=TSNE_MAX_ITER,
+                )
+            except TypeError:
+                # Si max_iter n'est pas supporté, utiliser sans ce paramètre
+                tsne = TSNE(
+                    n_components=TSNE_N_COMPONENTS,
+                    perplexity=perplexity,
+                    random_state=random_state,
+                )
+
             features_tsne = tsne.fit_transform(features_scaled)
 
             self.tsne_model = tsne
@@ -379,7 +390,24 @@ class PlaylistPathfinder:
             used_tracks: set[str] = set()
 
             for i, target_feature in enumerate(interpolated_features):
-                similarities: List[Tuple[float, Any, ...]] = []
+                # Tuple: (distance, similarity, track_id, genre, feature, pca_point, name, artists, confidence, uri, spotify_id, deezer_id, preview_url)
+                similarities: List[
+                    Tuple[
+                        float,
+                        float,
+                        Any,
+                        Any,
+                        Any,
+                        Any,
+                        Any,
+                        Any,
+                        Any,
+                        Any,
+                        Any,
+                        Any,
+                        Any,
+                    ]
+                ] = []
 
                 for idx, row in tracks_df.iterrows():
                     if row["track_id"] not in used_tracks:
@@ -395,7 +423,11 @@ class PlaylistPathfinder:
 
                         # Récupérer les coordonnées PCA pour la visualisation
                         track_pca_point = None
-                        if use_pca_for_visualization and self.pca_model is not None:
+                        if (
+                            use_pca_for_visualization
+                            and self.pca_model is not None
+                            and self.scaler is not None
+                        ):
                             if hasattr(self, "_features_pca_cache"):
                                 track_pca_point = self._features_pca_cache[idx]
                             else:
@@ -755,7 +787,7 @@ class PlaylistPathfinder:
                     # Fallback sur PCA si features brutes non disponibles
                     p1 = np.array([playlist[i]["PC1"], playlist[i]["PC2"]])
                     p2 = np.array([playlist[i + 1]["PC1"], playlist[i + 1]["PC2"]])
-                    smoothness_distances.append(np.linalg.norm(p2 - p1))
+                    smoothness_distances.append(float(np.linalg.norm(p2 - p1)))
 
             avg_smoothness = (
                 np.mean(smoothness_distances) if smoothness_distances else 0.0

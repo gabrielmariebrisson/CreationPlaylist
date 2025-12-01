@@ -3,13 +3,10 @@
 import pytest
 import numpy as np
 import pandas as pd
-from typing import Tuple
 
 from src.logic.playlist_generator import PlaylistPathfinder
 from src.config import (
     FEATURE_VIEW_SIZE,
-    DEFAULT_PLAYLIST_SIZE,
-    MIN_FEATURES_FOR_REDUCTION,
     PCA_N_COMPONENTS,
 )
 
@@ -442,14 +439,17 @@ class TestPlaylistPathfinder:
         features_list = [sample_features[i] for i in range(len(sample_features))]
         pathfinder.perform_pca(features_list)
 
-        playlist, line_points_2d, p1_2d, p2_2d = (
-            pathfinder.generate_playlist_line_from_pca_df(
-                pca_df=sample_tracks_df,
-                raw_features=sample_features,
-                track1_idx=track1_idx,
-                track2_idx=track2_idx,
-                num_tracks=num_tracks,
-            )
+        (
+            playlist,
+            line_points_2d,
+            p1_2d,
+            p2_2d,
+        ) = pathfinder.generate_playlist_line_from_pca_df(
+            pca_df=sample_tracks_df,
+            raw_features=sample_features,
+            track1_idx=track1_idx,
+            track2_idx=track2_idx,
+            num_tracks=num_tracks,
         )
 
         assert playlist is not None

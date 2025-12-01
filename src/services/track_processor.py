@@ -3,7 +3,6 @@
 from typing import Dict, Any, Optional, Callable, List
 import os
 import tempfile
-import numpy as np
 
 from src.models.audio_classifier import AudioClassifier
 from src.services.deezer_service import DeezerService
@@ -66,9 +65,7 @@ class TrackProcessor:
                 callback_spinner("Analyse en cours...") if callback_spinner else None
             )
             if spinner_context:
-                spinner = spinner_context.__enter__()
-            else:
-                spinner = None
+                spinner_context.__enter__()
 
             try:
                 temp_dir = tempfile.mkdtemp()
@@ -115,6 +112,7 @@ class TrackProcessor:
                     if not preview_url:
                         if callback_error:
                             callback_error("❌ Impossible de trouver cet extrait")
+                        if callback_info:
                             callback_info(
                                 "💡 Astuce : Essayez de rechercher directement "
                                 "dans l'onglet dédié"
@@ -175,11 +173,9 @@ class TrackProcessor:
                             ),
                             "deezer_id": deezer_id,
                             "uri": (
-                                (
-                                    spotify_match["uri"]
-                                    if spotify_match
-                                    else track.get("uri")
-                                )
+                                spotify_match["uri"]
+                                if spotify_match
+                                else track.get("uri")
                             ),
                             "preview_url": preview_url,
                             "source": (

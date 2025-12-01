@@ -58,4 +58,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Commande par défaut
 CMD ["streamlit", "run", "CreationPlaylist.py", "--server.port=8501", "--server.address=0.0.0.0"]
-

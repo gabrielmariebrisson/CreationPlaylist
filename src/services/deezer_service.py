@@ -1,6 +1,6 @@
 """Service pour gérer les interactions avec l'API Deezer."""
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 import requests
 
 from src.config import DEEZER_BASE_URL
@@ -34,7 +34,7 @@ class DeezerService:
         """
         try:
             url = f"{self.base_url}/search"
-            params = {"q": query, "limit": limit}
+            params: Dict[str, Union[str, int]] = {"q": query, "limit": limit}
 
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
@@ -171,7 +171,10 @@ class DeezerService:
             query = f"{artist_name} {track_name}"
 
             url = f"{self.base_url}/search"
-            params = {"q": query, "limit": 5}  # Prendre les 5 premiers résultats
+            params: Dict[str, Union[str, int]] = {
+                "q": query,
+                "limit": 5,
+            }  # Prendre les 5 premiers résultats
 
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
@@ -193,7 +196,6 @@ class DeezerService:
                     or deezer_artist in artist_name.lower()
                 )
                 if title_match and artist_match:
-
                     preview_url = item.get("preview")
                     if preview_url:
                         deezer_id = item.get("id")

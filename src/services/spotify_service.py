@@ -187,7 +187,7 @@ class SpotifyService:
                     self.session_state.spotify_service_token = new_token_info
                     token_info = new_token_info
                     logger.info("Token Spotify rafraîchi avec succès")
-                except SpotifyException as e:
+                except SpotifyException:
                     logger.exception(
                         "Erreur lors du rafraîchissement du token Spotify",
                         extra={
@@ -216,7 +216,7 @@ class SpotifyService:
             token_info = self.auth_manager.refresh_access_token(refresh_token)
             logger.info("Client Spotify créé avec succès (fallback)")
             return spotipy.Spotify(auth=token_info["access_token"])
-        except SpotifyException as e:
+        except SpotifyException:
             logger.exception(
                 "Erreur Spotify lors de la création du client (fallback)",
                 extra={"extra": {"error_type": "SpotifyException"}},

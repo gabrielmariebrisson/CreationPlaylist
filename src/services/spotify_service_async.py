@@ -3,7 +3,6 @@
 import os
 import asyncio
 from typing import Optional, Dict, List, Any
-from contextlib import asynccontextmanager
 
 import aiohttp
 from dotenv import load_dotenv
@@ -16,11 +15,8 @@ from tenacity import (
 )
 
 from src.config import (
-    SPOTIFY_DEFAULT_REDIRECT_URI,
-    SPOTIFY_TRACK_ID_LENGTH,
     SPOTIFY_SEARCH_LIMIT_DEFAULT,
     SPOTIFY_SEARCH_LIMIT_MATCH,
-    SPOTIFY_PLAYLIST_BATCH_SIZE,
 )
 from src.utils.logger import get_logger
 import logging
@@ -133,6 +129,9 @@ class AsyncSpotifyService:
         }
         auth = aiohttp.BasicAuth(self._client_id, self._client_secret)
 
+        # MyPy: _session ne devrait pas être None ici
+        assert self._session is not None
+
         try:
             async with self._session.post(url, data=data, auth=auth) as response:
                 if response.status == 200:
@@ -193,6 +192,9 @@ class AsyncSpotifyService:
         await self._ensure_session()
         access_token = await self._get_access_token()
 
+        # MyPy: _ensure_session garantit que _session n'est pas None
+        assert self._session is not None
+
         url = f"{self.BASE_URL}/{endpoint.lstrip('/')}"
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -200,6 +202,8 @@ class AsyncSpotifyService:
         }
 
         async def _do_request():
+            # MyPy: _session ne devrait pas être None après _ensure_session
+            assert self._session is not None
             try:
                 async with self._session.request(
                     method, url, headers=headers, params=params, json=json_data
@@ -233,6 +237,8 @@ class AsyncSpotifyService:
         async for attempt in retryer:
             with attempt:
                 return await _do_request()
+        # Cette ligne ne devrait jamais être atteinte grâce à AsyncRetrying
+        raise SpotifyAPIError("Tous les retries ont échoué")
 
     async def search_track(
         self, query: str, limit: int = SPOTIFY_SEARCH_LIMIT_DEFAULT
@@ -420,8 +426,9 @@ class AsyncSpotifyService:
                         },
                     )
                     results[track_id] = None
-                else:
-                    results[track_id] = result
+                elif result is not None:
+                    # MyPy: result n'est pas une Exception ici grâce au isinstance check
+                    results[track_id] = result  # type: ignore[assignment]
 
             logger.debug(
                 f"Batch {i // batch_size + 1} traité",
@@ -509,8 +516,9 @@ class AsyncSpotifyService:
                     },
                 )
                 results[query] = None
-            else:
-                results[query] = result
+            elif result is not None:
+                # MyPy: result n'est pas une Exception ici grâce au isinstance check
+                results[query] = result  # type: ignore[assignment]
 
         successful = sum(1 for v in results.values() if v is not None)
         logger.info(

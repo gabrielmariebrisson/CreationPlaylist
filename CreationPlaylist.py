@@ -1,31 +1,28 @@
-import streamlit as st
-import numpy as np
+import logging
+
 import pandas as pd
-from dotenv import load_dotenv
 import plotly.express as px
-import plotly.graph_objects as go
+import streamlit as st
+from deep_translator import GoogleTranslator
+from dotenv import load_dotenv
+
+from src.config import GENRE_LABEL_MAPPING, GENRE_COLORS, LANGUAGES
+from src.logic.playlist_generator import PlaylistPathfinder
+from src.models.audio_classifier import AudioClassifier
+from src.services.deezer_service import DeezerService
+from src.services.spotify_service import SpotifyService
+from src.services.track_processor import TrackProcessor
+from src.utils.logger import StructuredLogger
+from src.utils.visualization import visualize_playlist_transition
 
 load_dotenv()
 
 # Configuration du logging structuré
-from src.utils.logger import StructuredLogger
-import logging
-
 # Configurer le logging au démarrage de l'application
 StructuredLogger.configure(
-    level=logging.INFO, use_json=True  # Format JSON pour la production
+    level=logging.INFO,
+    use_json=True,  # Format JSON pour la production
 )
-
-# Imports des nouvelles classes modulaires
-from src.services.spotify_service import SpotifyService
-from src.services.deezer_service import DeezerService
-from src.services.track_processor import TrackProcessor
-from src.models.audio_classifier import AudioClassifier
-from src.logic.playlist_generator import PlaylistPathfinder
-from src.utils.visualization import visualize_playlist_transition
-from src.config import GENRE_LABEL_MAPPING, GENRE_COLORS, LANGUAGES
-
-from deep_translator import GoogleTranslator
 
 # Logger pour le fichier principal
 logger = logging.getLogger(__name__)
@@ -64,7 +61,7 @@ def _(text):
         translated = GoogleTranslator(source="fr", target=lang).translate(text)
         st.session_state.translations_cache[cache_key] = translated
         return translated
-    except:
+    except Exception:
         return text
 
 
@@ -222,7 +219,7 @@ with st.sidebar:
         try:
             user_info = spotify_client.current_user()
             user_name = user_info.get("display_name", user_info.get("id", "Service"))
-        except:
+        except Exception:
             st.error(_("❌ Erreur connexion"))
     else:
         st.error(_("❌ REFRESH_TOKEN_SPOTIFY manquant"))
@@ -245,7 +242,7 @@ with tab1:
         _(
             """
     Bienvenue dans votre analyseur de musique personnel !
-    
+
     **Fonctionnalités :**
     - 🔍 Recherche et analyse depuis
     - 🔍 Classification automatique par IA
@@ -457,16 +454,20 @@ with tab3:
                     pathfinder = st.session_state.playlist_pathfinder
                     if reduction_method == "tsne":
                         perplexity_val = st.session_state.get("tsne_perplexity", 30)
-                        result, model, scaler = (
-                            pathfinder.perform_dimensionality_reduction(
-                                features_list, method="tsne", perplexity=perplexity_val
-                            )
+                        (
+                            result,
+                            model,
+                            scaler,
+                        ) = pathfinder.perform_dimensionality_reduction(
+                            features_list, method="tsne", perplexity=perplexity_val
                         )
                     else:
-                        result, model, scaler = (
-                            pathfinder.perform_dimensionality_reduction(
-                                features_list, method="pca"
-                            )
+                        (
+                            result,
+                            model,
+                            scaler,
+                        ) = pathfinder.perform_dimensionality_reduction(
+                            features_list, method="pca"
                         )
 
                     if result is not None:
@@ -705,11 +706,12 @@ with tab4:
 
                         # Extraire les features brutes depuis analyzed_tracks
                         try:
-                            raw_features, missing_tracks = (
-                                pathfinder.extract_raw_features_from_analyzed_tracks(
-                                    st.session_state.pca_df,
-                                    st.session_state.analyzed_tracks,
-                                )
+                            (
+                                raw_features,
+                                missing_tracks,
+                            ) = pathfinder.extract_raw_features_from_analyzed_tracks(
+                                st.session_state.pca_df,
+                                st.session_state.analyzed_tracks,
                             )
 
                             if missing_tracks:
@@ -730,14 +732,17 @@ with tab4:
                                     pathfinder.perform_pca(features_list)
 
                             # Générer la playlist
-                            playlist, line_points, p1, p2 = (
-                                pathfinder.generate_playlist_line_from_pca_df(
-                                    pca_df=st.session_state.pca_df,
-                                    raw_features=raw_features,
-                                    track1_idx=track1_idx,
-                                    track2_idx=track2_idx,
-                                    num_tracks=num_tracks,
-                                )
+                            (
+                                playlist,
+                                line_points,
+                                p1,
+                                p2,
+                            ) = pathfinder.generate_playlist_line_from_pca_df(
+                                pca_df=st.session_state.pca_df,
+                                raw_features=raw_features,
+                                track1_idx=track1_idx,
+                                track2_idx=track2_idx,
+                                num_tracks=num_tracks,
                             )
 
                             if playlist is not None:
@@ -1175,7 +1180,7 @@ with tab5:
 
     st.markdown(
         _(
-            f"Le modèle a été entraîné pendant **30 minutes** et ses performances ont été évaluées sur des ensembles de validation et de test."
+            "Le modèle a été entraîné pendant **30 minutes** et ses performances ont été évaluées sur des ensembles de validation et de test."
         )
     )
 

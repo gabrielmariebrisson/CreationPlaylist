@@ -411,12 +411,90 @@ Les tests couvrent :
 - ✅ Gestion des erreurs (indices invalides, colonnes manquantes)
 - ✅ Analyse de qualité de playlist
 
+## 🔍 Linting et Formatage du Code
+
+Le projet utilise **Black**, **Ruff** et **MyPy** pour maintenir la qualité du code. Ces outils s'exécutent automatiquement via GitHub Actions sur chaque push et pull request.
+
+### Installation des outils de développement
+
+```bash
+# Installer les outils de linting
+make install-dev
+
+# Ou manuellement
+pip install black ruff mypy types-requests types-python-dateutil
+```
+
+### Utilisation avec Makefile
+
+```bash
+# Vérifier le formatage et le linting (sans modifier)
+make lint-check
+
+# Vérifier et bloquer si erreurs (pour CI)
+make lint
+
+# Corriger automatiquement les problèmes (black + ruff)
+make lint-fix
+
+# Formater uniquement avec Black
+make format
+```
+
+### Automatisation avec pre-commit (Recommandé)
+
+Pour lancer automatiquement les vérifications avant chaque commit :
+
+```bash
+# 1. Installer pre-commit
+pip install pre-commit
+
+# 2. Installer les hooks Git
+pre-commit install
+
+# 3. (Optionnel) Tester sur tous les fichiers
+pre-commit run --all-files
+```
+
+Une fois configuré, `pre-commit` exécutera automatiquement :
+- ✅ **Black** : Formatage automatique du code
+- ✅ **Ruff** : Linting et corrections automatiques
+- ✅ **MyPy** : Vérification des types
+- ✅ Autres vérifications (trailing whitespace, etc.)
+
+### Commandes manuelles
+
+```bash
+# Black - Formatage
+black src/ tests/                    # Formate le code
+black --check src/ tests/            # Vérifie sans modifier
+
+# Ruff - Linting
+ruff check src/ tests/               # Vérifie les erreurs
+ruff check --fix src/ tests/         # Corrige automatiquement
+
+# MyPy - Vérification des types
+mypy src/                            # Vérifie les types
+```
+
+### Configuration
+
+- **Black** : Configuration par défaut (line-length=88)
+- **Ruff** : Configuration par défaut (compatible avec Black)
+- **MyPy** : Configuration dans `mypy.ini` (configuration progressive)
+
+### GitHub Actions
+
+Les vérifications s'exécutent automatiquement sur chaque push et pull request. Les PRs ne peuvent pas être mergées si les vérifications échouent.
+
+Pour plus de détails, consultez [.github/workflows/README.md](.github/workflows/README.md).
+
 ## 🎓 Méthodologie technique détaillée
 
 ### Pipeline complet
 
 ```
-Audio (30s) 
+Audio (30s)
   → Spectrogramme de Mel (599×128)
   → CNN (SimpleCNN avec CBAM)
   → Embeddings (1536 dimensions)
@@ -465,4 +543,3 @@ Les contributions sont les bienvenues ! Pour toute question ou suggestion, n'hé
 ---
 
 **Note** : Ce projet utilise un modèle pré-entraîné sur le dataset GTZAN (10 genres, 100 morceaux). Pour de meilleures performances, il serait recommandé d'entraîner sur un dataset plus large et diversifié.
-

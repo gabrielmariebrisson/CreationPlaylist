@@ -70,9 +70,8 @@ def visualize_playlist_transition(
         colors = plt.cm.Set3(np.linspace(0, 1, len(genre_names)))
         for i, genre in enumerate(genre_names):
             mask = pca_df["genre"] == genre
-            genre_label = (
-                label_mapping.get(genre, genre) if isinstance(genre, int) else genre
-            )
+            # genre_names est une liste de strings, donc genre est toujours un str
+            genre_label = str(genre) if genre is not None else "Unknown"
             plt.scatter(
                 pca_df[mask]["PC1"],
                 pca_df[mask]["PC2"],
@@ -146,12 +145,13 @@ def visualize_playlist_transition(
         # Annotations des genres
         for track in playlist:
             if "PC1" in track and "PC2" in track:
-                genre = track.get("genre")
-                genre_label = (
-                    label_mapping.get(genre, genre) if isinstance(genre, int) else genre
-                )
-                if genre_label is None:
-                    genre_label = track.get("genre", "Unknown")
+                track_genre: Any = track.get("genre")
+                if isinstance(track_genre, int) and label_mapping is not None:
+                    genre_label = label_mapping.get(track_genre, str(track_genre))
+                elif track_genre is not None:
+                    genre_label = str(track_genre)
+                else:
+                    genre_label = "Unknown"
                 plt.annotate(
                     genre_label,
                     (track["PC1"], track["PC2"]),

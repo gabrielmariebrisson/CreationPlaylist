@@ -1,0 +1,44 @@
+# Configuration pre-commit pour lancer automatiquement black, ruff et mypy
+# Installation: pip install pre-commit && pre-commit install
+# Pour tester: pre-commit run --all-files
+
+repos:
+  # Black - Formatage du code
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        language_version: python3.10
+        args: ['--line-length=88']
+        files: ^(src/.*\.py|tests/.*\.py|CreationPlaylist\.py)$
+
+  # Ruff - Linting rapide
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^(src/.*\.py|tests/.*\.py|CreationPlaylist\.py)$
+      - id: ruff-format
+        files: ^(src/.*\.py|tests/.*\.py|CreationPlaylist\.py)$
+
+  # MyPy - Vérification des types
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests, types-python-dateutil]
+        args: [--config-file=mypy.ini]
+        files: ^src/.*\.py$
+        exclude: ^tests/
+
+  # Vérifications générales
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+

@@ -1,4 +1,4 @@
-.PHONY: help build up down logs shell test clean dev
+.PHONY: help build up down logs shell test clean dev lint format lint-check install-dev
 
 # Variables
 IMAGE_NAME = music-playlist-generator
@@ -64,3 +64,34 @@ install: ## Installation locale (sans Docker)
 run: ## Lance l'application localement
 	streamlit run CreationPlaylist.py
 
+# Commandes de linting et formatage
+install-dev: ## Installe les dépendances de développement (black, ruff, mypy)
+	pip install black ruff mypy types-requests types-python-dateutil
+
+format: ## Formate le code avec black
+	black src/ tests/ CreationPlaylist.py
+
+lint-check: ## Vérifie le formatage et le linting sans modifier (pour CI)
+	@echo "🔍 Vérification du formatage avec Black..."
+	black --check --diff src/ tests/ CreationPlaylist.py
+	@echo "🔍 Vérification du linting avec Ruff..."
+	ruff check src/ tests/ CreationPlaylist.py --output-format=github
+	@echo "🔍 Vérification des types avec MyPy..."
+	mypy src/
+	@echo "✅ Toutes les vérifications sont passées !"
+
+lint: ## Lance toutes les vérifications de linting (format, lint, type)
+	@echo "🔍 Vérification du formatage avec Black..."
+	black --check --diff src/ tests/ CreationPlaylist.py || (echo "❌ Black: exécutez 'make format' pour corriger" && exit 1)
+	@echo "🔍 Vérification du linting avec Ruff..."
+	ruff check src/ tests/ CreationPlaylist.py --output-format=github || (echo "❌ Ruff: exécutez 'make lint-fix' pour corriger" && exit 1)
+	@echo "🔍 Vérification des types avec MyPy..."
+	mypy src/ || (echo "❌ MyPy: corrigez les erreurs de typage" && exit 1)
+	@echo "✅ Toutes les vérifications sont passées !"
+
+lint-fix: ## Corrige automatiquement les problèmes de formatage et de linting
+	@echo "🔧 Formatage du code avec Black..."
+	black src/ tests/ CreationPlaylist.py
+	@echo "🔧 Correction automatique avec Ruff..."
+	ruff check --fix src/ tests/ CreationPlaylist.py
+	@echo "✅ Corrections appliquées ! (Vérifiez MyPy manuellement avec 'mypy src/')"

@@ -95,4 +95,3 @@ ports:
 ```bash
 sudo chown -R $USER:$USER logs/
 ```
-

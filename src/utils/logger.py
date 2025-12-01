@@ -4,8 +4,7 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
-from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
 
 class JSONFormatter(logging.Formatter):
@@ -100,6 +99,7 @@ class StructuredLogger:
         console_handler = logging.StreamHandler(stream)
         console_handler.setLevel(level)
 
+        formatter: Union[JSONFormatter, logging.Formatter]
         if use_json:
             formatter = JSONFormatter()
         else:
