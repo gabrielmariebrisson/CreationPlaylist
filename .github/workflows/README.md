@@ -14,11 +14,13 @@ Le workflow se déclenche automatiquement sur :
 ### Jobs
 
 #### 1. **Lint** - Linting & Code Quality
-- ✅ **Black** : Vérification du formatage du code
-- ✅ **Ruff** : Linting rapide (remplace flake8)
-- ✅ **MyPy** : Vérification des type hints (non-bloquant)
+- ✅ **Black** : Vérification du formatage du code (bloquant)
+- ✅ **Ruff** : Linting rapide (remplace flake8) (bloquant)
+- ✅ **MyPy** : Vérification des type hints (bloquant)
 
 **Durée estimée** : ~2-3 minutes
+
+**Note** : Toutes les vérifications de linting sont maintenant bloquantes. Si une vérification échoue, la pull request ne pourra pas être mergée. La configuration MyPy se trouve dans `mypy.ini` à la racine du projet.
 
 #### 2. **Test** - Unit Tests
 - ✅ Exécution des tests avec `pytest`
@@ -89,9 +91,11 @@ Vous pouvez ajouter des badges à votre README :
 3. Vérifiez que toutes les dépendances sont installées
 
 #### Le linting échoue
-1. Exécutez `black src/ tests/` pour formater le code
-2. Exécutez `ruff check src/ tests/` pour voir les erreurs
-3. Corrigez les erreurs MyPy si nécessaire
+1. **Black** : Exécutez `black src/ tests/` pour formater automatiquement le code
+2. **Ruff** : Exécutez `ruff check src/ tests/` pour voir les erreurs, puis `ruff check --fix src/ tests/` pour les corriger automatiquement
+3. **MyPy** : Exécutez `mypy src/` pour voir les erreurs de typage. Consultez `mypy.ini` pour la configuration. Les erreurs doivent être corrigées manuellement.
+
+**Important** : Toutes ces vérifications sont maintenant bloquantes. Les pull requests ne pourront pas être mergées si l'une d'elles échoue.
 
 #### Les imports échouent
 1. Vérifiez que tous les `__init__.py` sont présents

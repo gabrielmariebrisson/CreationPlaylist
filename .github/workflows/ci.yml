@@ -42,12 +42,11 @@ jobs:
       
       - name: Run Ruff (linting)
         run: |
-          ruff check src/ tests/ --output-format=github
+          ruff check src/ tests/ --output-format=github || (echo "❌ Ruff found linting issues. Run 'ruff check src/ tests/' to see details." && exit 1)
       
       - name: Run MyPy (type checking)
         run: |
-          mypy src/ --ignore-missing-imports --no-strict-optional || true
-        continue-on-error: true  # MyPy peut être strict, on continue même en cas d'erreur
+          mypy src/ || (echo "❌ MyPy found type checking issues. Run 'mypy src/' to see details. Check mypy.ini for configuration." && exit 1)
 
   test:
     name: Unit Tests
