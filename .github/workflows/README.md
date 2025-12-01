@@ -37,21 +37,15 @@ Le workflow se déclenche automatiquement sur :
 
 **Durée estimée** : ~2-3 minutes
 
-#### 4. **Integration Test** - Integration Tests
-- ✅ Tests d'intégration (si disponibles)
-- ✅ Vérification des imports de tous les modules
-- ✅ S'exécute après les tests unitaires
-
-**Durée estimée** : ~3-5 minutes
-
-#### 5. **Build Check** - Build Verification
+#### 4. **Build Check** - Build Verification
 - ✅ Vérification de la structure du package
 - ✅ Vérification des imports de configuration
 - ✅ Validation de la structure modulaire
+- ✅ Vérification des imports des modules principaux (SpotifyService, AudioClassifier, PlaylistPathfinder, AsyncSpotifyService)
 
 **Durée estimée** : ~1-2 minutes
 
-#### 6. **Notify** - Status Notification
+#### 5. **Notify** - Status Notification
 - ✅ Résumé du statut de tous les jobs
 - ✅ S'exécute toujours (`if: always()`)
 
@@ -71,7 +65,6 @@ Les workflows génèrent des artifacts :
 - Lint: 10 minutes
 - Test: 15 minutes
 - Security: 10 minutes
-- Integration: 20 minutes
 - Build: 10 minutes
 
 ### Badges
